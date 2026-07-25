@@ -45,6 +45,8 @@ import PharmacyMedicineForm from "./pages/pharmacy/PharmacyMedicineForm";
 import PharmacyStockHistory from "./pages/pharmacy/PharmacyStockHistory";
 import PharmacyExpiryAlerts from "./pages/pharmacy/PharmacyExpiryAlerts";
 import { Import } from "lucide-react";
+import AdminSalaryManagement from "./pages/admin/AdminSalaryManagement";
+import AdminWorkingDays from "./pages/admin/AdminWorkingDays";
  
 function AppRoutes() {
   const { user, initializing } = useAuth();
@@ -143,7 +145,9 @@ function AppRoutes() {
           <Route path="/admin/staff"     element={<AdminStaffAccounts />} />
           <Route path="/admin/employees" element={<AdminEmployeeDirectory />} />
           <Route path="/admin/biometric" element={<BiometricManagement />} /> 
-          <Route path="/admin/biometric/manage" element={<BiometricStaffEmployee />} /> {/* NEW */}
+          <Route path="/admin/biometric/manage" element={<BiometricStaffEmployee />} /> 
+          <Route path="/admin/salary-management" element={<AdminSalaryManagement />} /> 
+          <Route path="/admin/workingdays" element={<AdminWorkingDays />} /> 
         </Route>
         {/* Own dedicated path/component (AdminProfile.jsx), not the shared
             /profile below — avoids re-creating the duplicate-path bug and

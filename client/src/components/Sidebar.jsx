@@ -23,7 +23,8 @@ import {
   UserRound,
   ShieldCheck,
   Building2,
-  Fingerprint 
+  Fingerprint,
+ 
 } from "lucide-react";
 import { useState, useEffect } from "react";
 
@@ -65,7 +66,9 @@ const menuConfig = {
     { label: "Staff Accounts",     icon: ShieldCheck,     to: "/admin/staff"      },
     { label: "Employee Directory", icon: Building2,       to: "/admin/employees"  },
     { label: "My Profile",         icon: UserRound,       to: "/admin/profile" },
+    { label: "Working Days",         icon: CalendarClock,       to: "/admin/workingdays" },
     { label: "Biometric Management",  icon: Fingerprint,   to: "/admin/biometric" },
+    { label: "Salary Management",  icon: Wallet ,   to: "/admin/salary-management" },
   ],
 };
   

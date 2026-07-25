@@ -28,6 +28,12 @@ const MODULES = [
     description: "System & Roles",
     icon: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z",
   },
+  {
+    id: "MANAGER",
+    label: "Manager",
+    description: "Employee Management",
+    icon: "M9 17v-2a4 4 0 014-4h3m0 0l-3-3m3 3l-3 3M3 7a4 4 0 014-4h3m10 14v-2a4 4 0 00-4-4H8",
+  },
 ];
 
 const API_BASE = `${import.meta.env.VITE_API_URL || ""}/api`;
@@ -36,6 +42,7 @@ function routeFor(role, module) {
   const r = String(role || "").toLowerCase();
   const m = String(module || "").toUpperCase();
   if (r === "admin") return "/admin/dashboard";
+  if (r === "manager") return "/manager/dashboard";
   if (r === "receptionist" && m === "OPD") return "/opd-dashboard";
   if (r === "receptionist" && m === "IPD") return "/ipd-dashboard";
   if (r === "doctor" && m === "OPD") return "/doctor/opd/dashboard";

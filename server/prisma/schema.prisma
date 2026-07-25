@@ -11,20 +11,18 @@ datasource db {
 // directory (nurses, ward boys, cleaners, etc.) — no password, no Role, no
 // auth involvement at all. Kept entirely separate from User on purpose.
 model Employee {
-  id          String   @id @default(cuid())
-  fullName    String
-  designation String // free text: "Nurse", "Ward Boy", "Cleaner", etc. — not an enum, so new job titles don't need a migration
-  phone       String?
-  email       String?
-  joiningDate DateTime @db.Date
-  isActive    Boolean  @default(true)
-  notes       String?
-
-  // Which Shift (Working Timings & Shift Management) this employee is
-  // scheduled on — Day Shift / Night Shift / General Shift etc. Optional:
-  // an employee can exist in the directory with no shift assigned yet.
-  shiftId String?
-  shift   Shift?  @relation(fields: [shiftId], references: [id])
+  id              String    @id @default(cuid())
+  fullName        String
+  designation     String // free text: "Nurse", "Ward Boy", "Cleaner", etc. — not an enum, so new job titles don't need a migration
+  department      String? // free text: "OPD", "IPD", "Housekeeping", etc. — separate from designation (job title vs. team/section)
+  phone           String?
+  email           String?
+  joiningDate     DateTime  @db.Date
+  isActive        Boolean   @default(true)
+  notes           String?
+  shiftId         String?
+  shift           Shift?    @relation(fields: [shiftId], references: [id])
+  shiftAssignedAt DateTime?
 
   // Salary/bank details — entirely optional. Directory records can exist
   // with none of this filled in; nothing here is required to create or
@@ -37,14 +35,10 @@ model Employee {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  salaries EmployeeSalary[]
+  salaries     EmployeeSalary[]
+  shiftHistory ShiftAssignmentHistory[]
 }
 
-// One row per employee per calendar month. Created (usually via the bulk
-// "generate" action) from the Employee's current `salary` + that month's
-// Attendance records, then left editable — bonuses, extra/paid leaves, and
-// one-off adjustments for the *next* month are entered here, not on the
-// Employee record, so history for past months never changes retroactively.
 model EmployeeSalary {
   id         String @id @default(cuid())
   employeeId String
@@ -61,14 +55,8 @@ model EmployeeSalary {
   presentDays Float @default(0)
   leaveDays   Float @default(0) // ON_LEAVE count
   absentDays  Float @default(0) // ABSENT count
-
-  // paidLeaves = how many of (leaveDays + absentDays) are excused/paid this
-  // month (e.g. employee's monthly leave quota) — editable by admin.
-  // lopDays = actual loss-of-pay days deducted. Auto-suggested as
-  // max(0, leaveDays + absentDays - paidLeaves) whenever recalculated, but
-  // stored as its own editable field so admin can override it directly.
-  paidLeaves Float @default(0)
-  lopDays    Float @default(0)
+  paidLeaves  Float @default(0)
+  lopDays     Float @default(0)
 
   perDaySalary   Float @default(0) // = baseSalary / totalDays
   leaveDeduction Float @default(0) // auto = perDaySalary * lopDays, editable override
@@ -126,17 +114,18 @@ enum HolidayType {
 }
 
 model User {
-  id                String             @id @default(cuid())
-  fullName          String
-  email             String             @unique
-  phone             String             @unique
-  password          String
-  role              Role
-  modules           Module[]           @default([])
-  isActive          Boolean            @default(true)
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
-  notificationReads NotificationRead[]
+  id                     String                   @id @default(cuid())
+  fullName               String
+  email                  String                   @unique
+  phone                  String                   @unique
+  password               String
+  role                   Role
+  modules                Module[]                 @default([])
+  isActive               Boolean                  @default(true)
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
+  notificationReads      NotificationRead[]
+  shiftAssignmentChanges ShiftAssignmentHistory[]
 }
 
 model IPD_Patient {
@@ -286,21 +275,16 @@ model Category {
 }
 
 model medicine {
-  id                  String               @id @default(cuid())
-  serialNumber        String               @unique
-  drugName            String
-  genericName         String?
-  categoryId          String
-  manufacturer        String?
-  batchNumber         String
-  purchasePrice       Float
-  sellingPrice        Float
-  // How many individual tablets/units are in one pack/strip/box.
-  // purchasePrice/sellingPrice are per PACK; quantity (below) is tracked in
-  // individual UNITS (matches how OPD prescriptions and stock actions already
-  // subtract/add). Per-unit price = purchasePrice/sellingPrice ÷ unitsPerPack.
-  // Defaults to 1 so existing rows (and any medicine where price already IS
-  // per-unit) keep working with no data migration required.
+  id            String  @id @default(cuid())
+  serialNumber  String  @unique
+  drugName      String
+  genericName   String?
+  categoryId    String
+  manufacturer  String?
+  batchNumber   String
+  purchasePrice Float
+  sellingPrice  Float
+
   unitsPerPack        Int                  @default(1)
   quantity            Int                  @default(0)
   initialQuantity     Int                  @default(0)
@@ -369,6 +353,7 @@ enum Role {
   DOCTOR
   RECEPTIONIST
   PHARMACY
+  MANAGER
 }
 
 enum Module {
@@ -505,12 +490,6 @@ enum PunchMode {
   UNKNOWN
 }
 
-// Working Timings & Shift Management. A Shift defines the schedule
-// attendance is calculated against — grace windows around the start time,
-// an optional unpaid break, and a buffer before overtime starts accruing.
-// startTime/endTime are stored as "HH:mm" (24-hour, local) rather than a
-// DateTime since a shift has no fixed calendar date; endTime <= startTime
-// means the shift crosses midnight (e.g. "20:00" -> "08:00").
 model Shift {
   id                   String    @id @default(cuid())
   name                 String
@@ -528,9 +507,11 @@ model Shift {
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
-  mappings    BiometricMapping[]
-  attendances Attendance[]
-  employees   Employee[]
+  mappings          BiometricMapping[]
+  attendances       Attendance[]
+  employees         Employee[]
+  historyAsPrevious ShiftAssignmentHistory[] @relation("PreviousShiftHistory")
+  historyAsNew      ShiftAssignmentHistory[] @relation("NewShiftHistory")
 
   @@map("shifts")
 }
@@ -539,6 +520,22 @@ enum ShiftType {
   DAY
   NIGHT
   GENERAL
+}
+
+model ShiftAssignmentHistory {
+  id              String   @id @default(cuid())
+  employeeId      String
+  previousShiftId String?
+  newShiftId      String?
+  changedById     String? // User.id of the admin who made the change; null if made by an automated process
+  changedAt       DateTime @default(now())
+
+  employee      Employee @relation(fields: [employeeId], references: [id])
+  previousShift Shift?   @relation("PreviousShiftHistory", fields: [previousShiftId], references: [id])
+  newShift      Shift?   @relation("NewShiftHistory", fields: [newShiftId], references: [id])
+  changedBy     User?    @relation(fields: [changedById], references: [id])
+
+  @@map("shift_assignment_history")
 }
 
 enum AttendanceStatus {

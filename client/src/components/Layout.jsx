@@ -5,7 +5,7 @@ import Sidebar from "./Sidebar";
 import NotificationBell from "./NotificationBell";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
-import { Sun, Moon, Stethoscope, UserRound, Pill } from "lucide-react";
+import { Sun, Moon, Stethoscope, UserRound, Pill, Briefcase, ShieldCheck } from "lucide-react";
 
 const ROLE_STYLES = {
   doctor: {
@@ -25,6 +25,18 @@ const ROLE_STYLES = {
     wrap: "bg-emerald-50 dark:bg-emerald-500/15 border-emerald-200 dark:border-emerald-500/20",
     iconWrap: "bg-emerald-100 dark:bg-emerald-500/25 text-emerald-600 dark:text-emerald-400",
     text: "text-emerald-700 dark:text-emerald-400",
+  },
+  admin: {
+    icon: ShieldCheck,
+    wrap: "bg-amber-50 dark:bg-amber-500/15 border-amber-200 dark:border-amber-500/20",
+    iconWrap: "bg-amber-100 dark:bg-amber-500/25 text-amber-600 dark:text-amber-400",
+    text: "text-amber-700 dark:text-amber-400",
+  },
+  manager: {
+    icon: Briefcase,
+    wrap: "bg-orange-50 dark:bg-orange-500/15 border-orange-200 dark:border-orange-500/20",
+    iconWrap: "bg-orange-100 dark:bg-orange-500/25 text-orange-600 dark:text-orange-400",
+    text: "text-orange-700 dark:text-orange-400",
   },
 };
 

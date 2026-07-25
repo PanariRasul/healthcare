@@ -17,12 +17,14 @@ import { sendOtpSms } from "./sms.service.js";
 ============================================================================ */
 import { normalizePhone } from "./sms.service.js";
 
-const VALID_ROLES = ["ADMIN", "DOCTOR", "RECEPTIONIST", "PHARMACY"];
+const VALID_ROLES = ["ADMIN", "DOCTOR", "RECEPTIONIST", "PHARMACY", "MANAGER"];
 const VALID_MODULES = ["OPD", "IPD", "PHARMACY"];
-// "ADMIN" isn't a real Module — admins aren't assigned to one. It's a login
-// context the Login page sends so send-otp/verify-otp know to check the
-// user's ROLE instead of their modules array. See sendOtp/verifyOtpAndLogin.
-const VALID_LOGIN_CONTEXTS = [...VALID_MODULES, "ADMIN"];
+// "ADMIN" and "MANAGER" aren't real Modules — those users aren't assigned to
+// one. They're login contexts the Login page sends so send-otp/verify-otp
+// know to check the user's ROLE instead of their modules array. See
+// sendOtp/verifyOtpAndLogin.
+const ROLE_BASED_LOGIN_CONTEXTS = ["ADMIN", "MANAGER"];
+const VALID_LOGIN_CONTEXTS = [...VALID_MODULES, ...ROLE_BASED_LOGIN_CONTEXTS];
 
 /* ===================== OTP BYPASS CONST — DISABLED FOR DEV ================
 const OTP_BYPASS_CODE = "969696";
@@ -164,11 +166,11 @@ export async function sendOtp(req, res) {
       return res.status(401).json({ message: "Invalid mobile number or password." });
     }
 
-    // "ADMIN" isn't a real module — admins aren't assigned to one the way a
-    // receptionist/doctor/pharmacy user is. Check role instead.
-    if (moduleUpper === "ADMIN") {
-      if (user.role !== "ADMIN") {
-        return res.status(403).json({ message: "This account does not have admin access." });
+    // "ADMIN"/"MANAGER" aren't real modules — those users aren't assigned to
+    // one the way a receptionist/doctor/pharmacy user is. Check role instead.
+    if (ROLE_BASED_LOGIN_CONTEXTS.includes(moduleUpper)) {
+      if (user.role !== moduleUpper) {
+        return res.status(403).json({ message: `This account does not have ${moduleUpper.toLowerCase()} access.` });
       }
     } else if (!user.modules.includes(moduleUpper)) {
       return res.status(403).json({ message: "This account is not assigned to the selected module." });
@@ -275,10 +277,10 @@ export async function verifyOtpAndLogin(req, res) {
       console.warn(`[OTP-VERIFY] No active user found for phone "${phone}" (normalized "${normalized}") after OTP matched.`);
       return res.status(401).json({ message: "Invalid credentials." });
     }
-    if (moduleUpper === "ADMIN") {
-      if (user.role !== "ADMIN") {
-        console.warn(`[OTP-VERIFY] User ${user.id} is not an admin.`);
-        return res.status(403).json({ message: "This account does not have admin access." });
+    if (ROLE_BASED_LOGIN_CONTEXTS.includes(moduleUpper)) {
+      if (user.role !== moduleUpper) {
+        console.warn(`[OTP-VERIFY] User ${user.id} does not have the ${moduleUpper} role.`);
+        return res.status(403).json({ message: `This account does not have ${moduleUpper.toLowerCase()} access.` });
       }
     } else if (!user.modules.includes(moduleUpper)) {
       console.warn(`[OTP-VERIFY] User ${user.id} is not assigned to module ${moduleUpper}. Their modules: ${user.modules}`);

@@ -42,6 +42,14 @@ const SEED_USERS = [
     role: "PHARMACY",
     modules: ["PHARMACY"],
   },
+    {
+    fullName: "Manager",
+    email: "manager@gmail.com",
+    phone: "919876543213",
+    password: "123456",
+    role: "MANAGER",
+    modules: ["OPD", "IPD", "PHARMACY"],
+  },
 ];
 
 async function main() {

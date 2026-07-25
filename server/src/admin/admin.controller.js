@@ -124,7 +124,7 @@ export async function listEmployees(req, res) {
         }
       : {};
 
-    const employees = await prisma.employee.findMany({ where, orderBy: { createdAt: "desc" } });
+    const employees = await prisma.employee.findMany({ where, include: { shift: true }, orderBy: { createdAt: "desc" } });
     return res.status(200).json({ employees });
   } catch (err) {
     console.error("List employees error:", err);
@@ -135,7 +135,7 @@ export async function listEmployees(req, res) {
 // POST /api/admin/employees
 export async function createEmployee(req, res) {
   try {
-    const { fullName, designation, phone, email, joiningDate, notes, salary, bankName, ifscCode, bankAccountNo } = req.body;
+    const { fullName, designation, phone, email, joiningDate, notes, salary, bankName, ifscCode, bankAccountNo, shiftId } = req.body;
     if (!fullName || !designation || !joiningDate) {
       return res.status(400).json({ message: "fullName, designation, and joiningDate are required." });
     }
@@ -150,6 +150,11 @@ export async function createEmployee(req, res) {
       return res.status(400).json({ message: "salary must be a number." });
     }
 
+    if (shiftId) {
+      const shift = await prisma.shift.findUnique({ where: { id: shiftId } });
+      if (!shift) return res.status(404).json({ message: "Shift not found." });
+    }
+
     const employee = await prisma.employee.create({
       data: {
         fullName,
@@ -162,7 +167,9 @@ export async function createEmployee(req, res) {
         bankName: bankName || null,
         ifscCode: ifscCode || null,
         bankAccountNo: bankAccountNo || null,
+        shiftId: shiftId || null,
       },
+      include: { shift: true },
     });
 
     return res.status(201).json({ employee });
@@ -190,6 +197,7 @@ export async function updateEmployee(req, res) {
       bankName,
       ifscCode,
       bankAccountNo,
+      shiftId,
     } = req.body;
     const data = {};
     if (fullName !== undefined) data.fullName = fullName;
@@ -211,7 +219,15 @@ export async function updateEmployee(req, res) {
     if (ifscCode !== undefined) data.ifscCode = ifscCode || null;
     if (bankAccountNo !== undefined) data.bankAccountNo = bankAccountNo || null;
 
-    const employee = await prisma.employee.update({ where: { id: req.params.id }, data });
+    if (shiftId !== undefined) {
+      if (shiftId) {
+        const shift = await prisma.shift.findUnique({ where: { id: shiftId } });
+        if (!shift) return res.status(404).json({ message: "Shift not found." });
+      }
+      data.shiftId = shiftId || null;
+    }
+
+    const employee = await prisma.employee.update({ where: { id: req.params.id }, data, include: { shift: true } });
     return res.status(200).json({ employee });
   } catch (err) {
     console.error("Update employee error:", err);

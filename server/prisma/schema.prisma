@@ -20,6 +20,12 @@ model Employee {
   isActive    Boolean  @default(true)
   notes       String?
 
+  // Which Shift (Working Timings & Shift Management) this employee is
+  // scheduled on — Day Shift / Night Shift / General Shift etc. Optional:
+  // an employee can exist in the directory with no shift assigned yet.
+  shiftId String?
+  shift   Shift?  @relation(fields: [shiftId], references: [id])
+
   // Salary/bank details — entirely optional. Directory records can exist
   // with none of this filled in; nothing here is required to create or
   // update an employee.
@@ -524,6 +530,7 @@ model Shift {
 
   mappings    BiometricMapping[]
   attendances Attendance[]
+  employees   Employee[]
 
   @@map("shifts")
 }

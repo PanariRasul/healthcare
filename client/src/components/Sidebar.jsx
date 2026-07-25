@@ -65,6 +65,8 @@ const menuConfig = {
     { label: "Dashboard",          icon: LayoutDashboard, to: "/admin/dashboard"  },
     { label: "Staff Accounts",     icon: ShieldCheck,     to: "/admin/staff"      },
     { label: "Employee Directory", icon: Building2,       to: "/admin/employees"  },
+    { label: "Patient Analytics",  icon: Users,           to: "/admin/patients"   },
+    { label: "Pharmacy Analytics", icon: Pill,            to: "/admin/pharmacy"   },
     { label: "My Profile",         icon: UserRound,       to: "/admin/profile" },
     { label: "Working Days",         icon: CalendarClock,       to: "/admin/workingdays" },
     { label: "Biometric Management",  icon: Fingerprint,   to: "/admin/biometric" },

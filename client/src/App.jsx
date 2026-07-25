@@ -36,6 +36,8 @@ import AdminDashboard from "./pages/admin/AdminDashboard";
 import AdminStaffAccounts from "./pages/admin/AdminStaffAccounts";
 import AdminEmployeeDirectory from "./pages/admin/AdminEmployeeDirectory";
 import AdminProfile from "./pages/admin/AdminProfile";
+import AdminPharmacyAnalytics from "./pages/admin/AdminPharmacyAnalytics";
+import AdminPatientAnalytics from "./pages/admin/AdminPatientAnalytics"; // NEW
 import BiometricManagement from "./pages/admin/biometric/BiometricManagement";
 import BiometricStaffEmployee from "./pages/admin/biometric/BiometricStaffEmployee"
 
@@ -144,6 +146,8 @@ function AppRoutes() {
           <Route path="/admin/dashboard" element={<AdminDashboard />} />
           <Route path="/admin/staff"     element={<AdminStaffAccounts />} />
           <Route path="/admin/employees" element={<AdminEmployeeDirectory />} />
+          <Route path="/admin/pharmacy"  element={<AdminPharmacyAnalytics />} />
+           <Route path="/admin/patients"  element={<AdminPatientAnalytics />} />
           <Route path="/admin/biometric" element={<BiometricManagement />} /> 
           <Route path="/admin/biometric/manage" element={<BiometricStaffEmployee />} /> 
           <Route path="/admin/salary-management" element={<AdminSalaryManagement />} /> 
@@ -153,6 +157,7 @@ function AppRoutes() {
             /profile below — avoids re-creating the duplicate-path bug and
             matches the naming convention of the other Admin pages. */}
         <Route path="/admin/profile" element={<AdminProfile />} />
+
       </Route>
 
       

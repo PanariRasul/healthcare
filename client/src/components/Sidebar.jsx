@@ -24,6 +24,7 @@ import {
   ShieldCheck,
   Building2,
   Fingerprint,
+  Briefcase,
  
 } from "lucide-react";
 import { useState, useEffect } from "react";
@@ -71,6 +72,12 @@ const menuConfig = {
     { label: "Working Days",         icon: CalendarClock,       to: "/admin/workingdays" },
     { label: "Biometric Management",  icon: Fingerprint,   to: "/admin/biometric" },
     { label: "Salary Management",  icon: Wallet ,   to: "/admin/salary-management" },
+    { label: "Shift Assignment",  icon: UserPlus ,   to: "/admin/shift-assign" },
+  ],
+  "manager-MANAGER": [
+    { label: "Dashboard",          icon: LayoutDashboard, to: "/manager/dashboard"    },
+    { label: "Employee Directory", icon: Building2,       to: "/manager/employees"    },
+    { label: "Shift Assignment",   icon: UserPlus,        to: "/manager/shift-assign" },
   ],
 };
   
@@ -84,6 +91,7 @@ export default function Sidebar({ collapsed, setCollapsed }) {
 
   const isOPD      = user?.module === "OPD";
   const isPharmacy = user?.module === "Pharmacy";
+  const isManager  = user?.role === "manager";
 
   const handleLogout = () => {
     logout();
@@ -133,13 +141,16 @@ export default function Sidebar({ collapsed, setCollapsed }) {
       {!mini && user && (
         <div className="px-4 pt-4 pb-2 flex-shrink-0">
           <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-semibold w-full ${
-            isPharmacy
+            isManager
+              ? "bg-orange-50 dark:bg-orange-500/10 border-orange-200 dark:border-orange-500/20 text-orange-700 dark:text-orange-400"
+              : isPharmacy
               ? "bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20 text-emerald-700 dark:text-emerald-400"
               : isOPD
               ? "bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20 text-emerald-700 dark:text-emerald-400"
               : "bg-violet-50 dark:bg-violet-500/10 border-violet-200 dark:border-violet-500/20 text-violet-700 dark:text-violet-400"
           }`}>
-            {isPharmacy ? <Pill className="w-3.5 h-3.5 flex-shrink-0" />
+            {isManager ? <Briefcase className="w-3.5 h-3.5 flex-shrink-0" />
+              : isPharmacy ? <Pill className="w-3.5 h-3.5 flex-shrink-0" />
               : isOPD ? <Stethoscope className="w-3.5 h-3.5 flex-shrink-0" />
               : <BedDouble className="w-3.5 h-3.5 flex-shrink-0" />}
             <span>{user.module} Module</span>

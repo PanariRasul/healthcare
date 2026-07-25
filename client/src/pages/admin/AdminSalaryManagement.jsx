@@ -291,7 +291,7 @@ export default function AdminSalaryManagement() {
           Generate draft salary rows for every active employee for <span className="font-semibold text-slate-700 dark:text-slate-200">{MONTH_NAMES[month - 1]} {year}</span>, auto-filled from attendance. Absent and unpaid leave days are deducted as Loss of Pay automatically.
         </div>
         <div className="flex items-center gap-2 ml-auto">
-          <div>
+          {/* <div>
             <label className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 block mb-1">Paid leaves/mo</label>
             <input
               type="number"
@@ -300,7 +300,7 @@ export default function AdminSalaryManagement() {
               onChange={(e) => setDefaultPaidLeaves(Number(e.target.value))}
               className="w-16 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-2 text-sm text-slate-800 dark:text-white focus:outline-none focus:border-teal-500"
             />
-          </div>
+          </div> */}
           <button
             onClick={handleGenerate}
             disabled={generating}

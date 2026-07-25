@@ -49,6 +49,8 @@ import PharmacyExpiryAlerts from "./pages/pharmacy/PharmacyExpiryAlerts";
 import { Import } from "lucide-react";
 import AdminSalaryManagement from "./pages/admin/AdminSalaryManagement";
 import AdminWorkingDays from "./pages/admin/AdminWorkingDays";
+import AdminEmployeeShiftAssignment from "./pages/admin/AdminEmpShiftAssignment";
+import ManagerDashboard from "./pages/manager/ManagerDashboard";
  
 function AppRoutes() {
   const { user, initializing } = useAuth();
@@ -152,12 +154,27 @@ function AppRoutes() {
           <Route path="/admin/biometric/manage" element={<BiometricStaffEmployee />} /> 
           <Route path="/admin/salary-management" element={<AdminSalaryManagement />} /> 
           <Route path="/admin/workingdays" element={<AdminWorkingDays />} /> 
+          <Route path="/admin/shift-assign" element={<AdminEmployeeShiftAssignment />} /> 
         </Route>
         {/* Own dedicated path/component (AdminProfile.jsx), not the shared
             /profile below — avoids re-creating the duplicate-path bug and
             matches the naming convention of the other Admin pages. */}
         <Route path="/admin/profile" element={<AdminProfile />} />
 
+      </Route>
+
+      {/* Manager — reuses the same Employee Directory and Shift Assignment
+          pages Admin uses, just under /manager/* routes so Manager's own
+          ProtectedRoute/sidebar apply. */}
+      <Route element={
+        <ProtectedRoute role="manager">
+          <Layout />
+        </ProtectedRoute>
+      }>
+        <Route path="/manager" element={<Navigate to="/manager/dashboard" replace />} />
+        <Route path="/manager/dashboard" element={<ManagerDashboard />} />
+        <Route path="/manager/employees" element={<AdminEmployeeDirectory />} />
+        <Route path="/manager/shift-assign" element={<AdminEmployeeShiftAssignment />} />
       </Route>
 
       

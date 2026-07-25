@@ -8,6 +8,13 @@
 // afterwards via `updateSalary` — bonuses, extra paid leaves, one-off
 // adjustments for next month, etc. Past months are never rewritten by
 // editing the Employee record itself, only by editing that month's row.
+//
+// The core math (see suggestLop/deriveTotals below): Net Salary is always
+// derived from Present Days worked. Every day that's ON_LEAVE or ABSENT is
+// automatically treated as Loss of Pay (LOP) UNLESS it's covered by the
+// Paid Leaves quota — so absences reduce pay automatically, while still
+// leaving both Paid Leaves and LOP Days open for the admin to override by
+// hand (e.g. an unpaid absence the admin wants to excuse anyway).
 import prisma from "../lib/prisma.js";
 import { monthRange, getWorkingDaysSummary } from "../lib/workingDays.js";
 
@@ -41,7 +48,10 @@ async function computeAttendance(employeeId, year, month) {
 // Recomputes the derived money fields (perDaySalary, leaveDeduction,
 // netSalary) from whatever base/attendance/adjustment fields are currently
 // on the record. Called after every create/edit so netSalary never drifts
-// out of sync with its inputs.
+// out of sync with its inputs. Algebraically this always nets out to:
+//   netSalary = perDaySalary * (presentDays + paidLeaves) + bonus + otherAdjustment
+// i.e. pay for the days actually worked (plus any excused paid leave),
+// which is exactly "prorate salary by Present Days."
 function deriveTotals({ baseSalary, totalDays, lopDays, bonus, otherAdjustment }) {
   const perDaySalary = totalDays > 0 ? baseSalary / totalDays : 0;
   const leaveDeduction = perDaySalary * lopDays;
@@ -53,6 +63,10 @@ function deriveTotals({ baseSalary, totalDays, lopDays, bonus, otherAdjustment }
   };
 }
 
+// Absent days (and unpaid ON_LEAVE days) automatically become LOP, minus
+// whatever the admin has granted as Paid Leaves for the month. Clamped at 0
+// so granting more paid leaves than were actually taken never creates a
+// negative LOP (which would otherwise look like a bonus).
 function suggestLop({ leaveDays, absentDays, paidLeaves }) {
   return Math.max(0, leaveDays + absentDays - paidLeaves);
 }
@@ -188,9 +202,10 @@ export async function generateForMonth(req, res) {
 
 // PUT /api/admin/salaries/:id/recalculate
 // Re-pulls Attendance for this record's employee/month (useful if
-// attendance was corrected after the row was generated) and refreshes the
-// auto fields. Keeps whatever bonus/otherAdjustment/paidLeaves are already
-// on the row, and re-suggests lopDays from the fresh attendance counts.
+// attendance was corrected after the row was generated), refreshes
+// totalDays from the current Working Days config, and re-suggests lopDays
+// from the fresh attendance + this row's existing paidLeaves. Keeps
+// whatever bonus/otherAdjustment/paidLeaves are already on the row.
 export async function recalculate(req, res) {
   try {
     const existing = await prisma.employeeSalary.findUnique({ where: { id: req.params.id } });
@@ -267,6 +282,20 @@ export async function updateSalary(req, res) {
         return res.status(400).json({ message: "status must be DRAFT or FINALIZED here. Use mark-paid to set PAID." });
       }
       data.status = status;
+    }
+
+    // Absent/leave days are auto-treated as LOP. If the admin changed Paid
+    // Leaves but didn't also type an explicit LOP override in this same
+    // request, re-suggest lopDays from the record's stored attendance
+    // (leaveDays + absentDays) and the new paid-leave count — so nudging
+    // "Paid Leaves" alone still keeps LOP (and therefore Net Salary) in
+    // sync automatically. An explicit lopDays in the request always wins.
+    if (paidLeaves !== undefined && lopDays === undefined) {
+      data.lopDays = suggestLop({
+        leaveDays: existing.leaveDays,
+        absentDays: existing.absentDays,
+        paidLeaves: data.paidLeaves,
+      });
     }
 
     const merged = { ...existing, ...data };

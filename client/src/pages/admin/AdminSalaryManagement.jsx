@@ -8,6 +8,12 @@
 //      salary recalculates automatically.
 //   3. Finalize, then Mark Paid once payment actually goes out.
 //   4. "History" on any employee shows every past month's record.
+//
+// Salary math: Net Salary is always derived from Present Days worked. Every
+// ON_LEAVE or ABSENT day is automatically Loss of Pay (LOP) unless it's
+// covered by the Paid Leaves quota for the month — see suggestLop/
+// deriveTotals in salary.controller.js. Paid Leaves and LOP Days both stay
+// admin-editable on top of that suggestion.
 import { useState, useEffect } from "react";
 import { api } from "../../lib/api";
 import {
@@ -41,6 +47,16 @@ function money(value) {
   return `₹${num.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 }
 
+// Mirrors the backend's suggestLop() so the LOP Days field can auto-update
+// in the UI the instant Paid Leaves is edited, without waiting on a
+// round-trip to the server. The server re-derives the same number on save
+// regardless, so this is purely for instant visual feedback.
+function suggestLop({ leaveDays, absentDays, paidLeaves }) {
+  const n = Number(paidLeaves);
+  if (Number.isNaN(n)) return 0;
+  return Math.max(0, (leaveDays || 0) + (absentDays || 0) - n);
+}
+
 const editableFields = (s) => ({
   baseSalary: s.baseSalary,
   paidLeaves: s.paidLeaves,
@@ -65,10 +81,17 @@ export default function AdminSalaryManagement() {
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
 
-  const [defaultPaidLeaves, setDefaultPaidLeaves] = useState(2);
+  // 0 by default: with no paid-leave quota granted, every absent/leave day
+  // shows up as LOP immediately. Admins raise this per-generation only for
+  // months where they want to excuse some days upfront.
+  const [defaultPaidLeaves, setDefaultPaidLeaves] = useState(0);
 
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState(null);
+  // The attendance counts (leaveDays/absentDays) for whichever row is being
+  // edited — not sent to the server, just kept around so the LOP Days field
+  // can auto-recompute live as Paid Leaves is typed.
+  const [editAttendance, setEditAttendance] = useState(null);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -127,6 +150,18 @@ export default function AdminSalaryManagement() {
   const startEdit = (s) => {
     setEditingId(s.id);
     setEditForm(editableFields(s));
+    setEditAttendance({ leaveDays: s.leaveDays, absentDays: s.absentDays });
+  };
+
+  // Paid Leaves changing re-suggests LOP Days automatically (matches the
+  // backend's behavior on save) — but if the admin then types their own
+  // LOP Days value afterward, that explicit entry is what gets saved.
+  const changePaidLeaves = (value) => {
+    setEditForm((f) => ({
+      ...f,
+      paidLeaves: value,
+      lopDays: editAttendance ? suggestLop({ ...editAttendance, paidLeaves: value }) : f.lopDays,
+    }));
   };
 
   const saveEdit = async (id) => {
@@ -136,6 +171,7 @@ export default function AdminSalaryManagement() {
       await api.put(`/admin/salaries/${id}`, editForm);
       setInfo("Salary record updated.");
       setEditingId(null);
+      setEditAttendance(null);
       fetchSalaries();
     } catch (err) {
       setError(err.message || "Could not update salary record.");
@@ -252,17 +288,19 @@ export default function AdminSalaryManagement() {
       {/* Generate bar */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 flex items-center gap-4 flex-wrap">
         <div className="text-sm text-slate-500 dark:text-slate-400">
-          Generate draft salary rows for every active employee for <span className="font-semibold text-slate-700 dark:text-slate-200">{MONTH_NAMES[month - 1]} {year}</span>, auto-filled from attendance.
+          Generate draft salary rows for every active employee for <span className="font-semibold text-slate-700 dark:text-slate-200">{MONTH_NAMES[month - 1]} {year}</span>, auto-filled from attendance. Absent and unpaid leave days are deducted as Loss of Pay automatically.
         </div>
         <div className="flex items-center gap-2 ml-auto">
-          <label className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">Paid leaves/mo</label>
-          <input
-            type="number"
-            min={0}
-            value={defaultPaidLeaves}
-            onChange={(e) => setDefaultPaidLeaves(Number(e.target.value))}
-            className="w-16 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-2 text-sm text-slate-800 dark:text-white focus:outline-none focus:border-teal-500"
-          />
+          <div>
+            <label className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 block mb-1">Paid leaves/mo</label>
+            <input
+              type="number"
+              min={0}
+              value={defaultPaidLeaves}
+              onChange={(e) => setDefaultPaidLeaves(Number(e.target.value))}
+              className="w-16 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-2 text-sm text-slate-800 dark:text-white focus:outline-none focus:border-teal-500"
+            />
+          </div>
           <button
             onClick={handleGenerate}
             disabled={generating}
@@ -302,7 +340,13 @@ export default function AdminSalaryManagement() {
               <thead>
                 <tr className="bg-slate-50 dark:bg-slate-900/50">
                   {["Employee", "Base", "Present/Off Days/Absent", "Paid Lv.", "LOP Days", "Deduction", "Bonus", "Net", "Status", "Actions"].map((h) => (
-                    <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                    <th
+                      key={h}
+                      title={h === "LOP Days" ? "Auto-suggested from Absent + unpaid Leave days, minus Paid Leaves. Editable." : undefined}
+                      className="text-left px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-500 uppercase tracking-wider whitespace-nowrap"
+                    >
+                      {h}
+                    </th>
                   ))}
                 </tr>
               </thead>
@@ -313,8 +357,8 @@ export default function AdminSalaryManagement() {
                       <td colSpan={10} className="px-4 py-4">
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
                           <MiniField label="Base Salary (₹)" type="number" value={editForm.baseSalary} onChange={(v) => setEditForm(f => ({ ...f, baseSalary: v }))} />
-                          <MiniField label="Paid Leaves" type="number" value={editForm.paidLeaves} onChange={(v) => setEditForm(f => ({ ...f, paidLeaves: v }))} />
-                          <MiniField label="LOP Days" type="number" value={editForm.lopDays} onChange={(v) => setEditForm(f => ({ ...f, lopDays: v }))} />
+                          <MiniField label="Paid Leaves" type="number" value={editForm.paidLeaves} onChange={changePaidLeaves} />
+                          <MiniField label="LOP Days (auto)" type="number" value={editForm.lopDays} onChange={(v) => setEditForm(f => ({ ...f, lopDays: v }))} />
                           <div>
                             <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1.5">Status</label>
                             <select
@@ -327,6 +371,11 @@ export default function AdminSalaryManagement() {
                             </select>
                           </div>
                         </div>
+                        {editAttendance && (
+                          <p className="text-xs text-slate-400 dark:text-slate-500 -mt-2 mb-3">
+                            Attendance this month: {editAttendance.absentDays} absent + {editAttendance.leaveDays} unpaid leave day(s). LOP Days recalculates automatically when Paid Leaves changes — edit it directly to override.
+                          </p>
+                        )}
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
                           <MiniField label="Bonus (₹)" type="number" value={editForm.bonus} onChange={(v) => setEditForm(f => ({ ...f, bonus: v }))} />
                           <MiniField label="Bonus Reason" value={editForm.bonusReason} onChange={(v) => setEditForm(f => ({ ...f, bonusReason: v }))} placeholder="e.g. Diwali bonus" />
@@ -346,7 +395,7 @@ export default function AdminSalaryManagement() {
                           <button onClick={() => saveEdit(s.id)} disabled={saving} className="flex items-center gap-1.5 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-950 text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-50">
                             <Check className="w-3.5 h-3.5" /> Save
                           </button>
-                          <button onClick={() => setEditingId(null)} className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 px-3 py-2">
+                          <button onClick={() => { setEditingId(null); setEditAttendance(null); }} className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 px-3 py-2">
                             <X className="w-3.5 h-3.5" /> Cancel
                           </button>
                         </div>
@@ -365,7 +414,12 @@ export default function AdminSalaryManagement() {
                           <div className="text-slate-400 dark:text-slate-600">of {s.totalDays} days</div>
                         </td>
                         <td className="px-4 py-3.5 text-slate-600 dark:text-slate-300">{s.paidLeaves}</td>
-                        <td className="px-4 py-3.5 text-slate-600 dark:text-slate-300">{s.lopDays}</td>
+                        <td
+                          className="px-4 py-3.5 text-slate-600 dark:text-slate-300"
+                          title={`${s.absentDays} absent + ${s.leaveDays} unpaid leave − ${s.paidLeaves} paid leave(s) = ${s.lopDays} LOP day(s)`}
+                        >
+                          {s.lopDays}
+                        </td>
                         <td className="px-4 py-3.5 text-rose-500 whitespace-nowrap">-{money(s.leaveDeduction)}</td>
                         <td className="px-4 py-3.5 text-emerald-600 dark:text-emerald-400 whitespace-nowrap" title={s.bonusReason || ""}>
                           {s.bonus ? `+${money(s.bonus)}` : "—"}

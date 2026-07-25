@@ -5,7 +5,7 @@
 // AdminStaffAccounts.jsx instead.
 import { useState, useEffect } from "react";
 import { api } from "../../lib/api";
-import { UserPlus, Loader2, Pencil, Trash2, X, Check, Building2, Search, Wallet } from "lucide-react";
+import { UserPlus, Loader2, Pencil, Trash2, X, Check, Building2, Search, Wallet, Sun, Moon, CalendarClock } from "lucide-react";
 
 const emptyForm = {
   fullName: "",
@@ -18,7 +18,28 @@ const emptyForm = {
   bankName: "",
   ifscCode: "",
   bankAccountNo: "",
+  shiftId: "",
 };
+
+const SHIFT_TYPE_META = {
+  DAY: { label: "Day", icon: Sun, className: "bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/20" },
+  NIGHT: { label: "Night", icon: Moon, className: "bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-400 border-indigo-200 dark:border-indigo-500/20" },
+  GENERAL: { label: "General", icon: CalendarClock, className: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700" },
+};
+
+function ShiftBadge({ shift }) {
+  if (!shift) return <span className="text-slate-400 dark:text-slate-600 text-xs">Unassigned</span>;
+  const meta = SHIFT_TYPE_META[shift.type] || SHIFT_TYPE_META.GENERAL;
+  const Icon = meta.icon;
+  return (
+    <div>
+      <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full border ${meta.className}`}>
+        <Icon className="w-3 h-3" /> {meta.label}
+      </span>
+      <div className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{shift.name}</div>
+    </div>
+  );
+}
 
 function formatSalary(value) {
   if (value === null || value === undefined || value === "") return "—";
@@ -29,6 +50,7 @@ function formatSalary(value) {
 
 export default function AdminEmployeeDirectory() {
   const [employees, setEmployees] = useState([]);
+  const [shifts, setShifts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
@@ -57,6 +79,18 @@ export default function AdminEmployeeDirectory() {
   };
 
   useEffect(() => { fetchEmployees(); }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await api.get("/biometric/shifts?status=active&limit=100");
+        setShifts(data.shifts);
+      } catch {
+        // shift list is a convenience for the dropdown only — a failure here
+        // shouldn't block viewing/editing the employee directory.
+      }
+    })();
+  }, []);
 
   const filtered = employees.filter((e) =>
     e.fullName.toLowerCase().includes(search.toLowerCase()) ||
@@ -96,6 +130,7 @@ export default function AdminEmployeeDirectory() {
       bankName: emp.bankName || "",
       ifscCode: emp.ifscCode || "",
       bankAccountNo: emp.bankAccountNo || "",
+      shiftId: emp.shiftId || "",
     });
   };
 
@@ -172,6 +207,19 @@ export default function AdminEmployeeDirectory() {
             <Field label="Phone" value={createForm.phone} onChange={(v) => setCreateForm(f => ({ ...f, phone: v }))} placeholder="Phone Number" />
             <Field label="Email" type="email" value={createForm.email} onChange={(v) => setCreateForm(f => ({ ...f, email: v }))} placeholder="Email" />
             <Field label="Joining Date" type="date" value={createForm.joiningDate} onChange={(v) => setCreateForm(f => ({ ...f, joiningDate: v }))} />
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1.5">Shift</label>
+              <select
+                value={createForm.shiftId}
+                onChange={(e) => setCreateForm(f => ({ ...f, shiftId: e.target.value }))}
+                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-800 dark:text-white focus:outline-none focus:border-teal-500"
+              >
+                <option value="">Unassigned</option>
+                {shifts.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name} ({s.type === "DAY" ? "Day Shift" : s.type === "NIGHT" ? "Night Shift" : "General Shift"})</option>
+                ))}
+              </select>
+            </div>
           </div>
           <div>
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1.5">Notes (optional)</label>
@@ -253,10 +301,10 @@ export default function AdminEmployeeDirectory() {
       ) : (
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[820px]">
+            <table className="w-full text-sm min-w-[940px]">
               <thead>
                 <tr className="bg-slate-50 dark:bg-slate-900/50">
-                  {["Name", "Designation", "Contact", "Joined", "Salary", "Status", "Actions"].map((h) => (
+                  {["Name", "Designation", "Shift", "Contact", "Joined", "Salary", "Status", "Actions"].map((h) => (
                     <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-slate-500 dark:text-slate-500 uppercase tracking-wider">{h}</th>
                   ))}
                 </tr>
@@ -265,13 +313,26 @@ export default function AdminEmployeeDirectory() {
                 {filtered.map((emp) => (
                   <tr key={emp.id} className="border-t border-slate-100 dark:border-slate-800/50">
                     {editingId === emp.id ? (
-                      <td colSpan={7} className="px-5 py-4">
+                      <td colSpan={8} className="px-5 py-4">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
                           <Field label="Full Name" value={editForm.fullName} onChange={(v) => setEditForm(f => ({ ...f, fullName: v }))} />
                           <Field label="Designation" value={editForm.designation} onChange={(v) => setEditForm(f => ({ ...f, designation: v }))} />
                           <Field label="Phone" value={editForm.phone} onChange={(v) => setEditForm(f => ({ ...f, phone: v }))} />
                           <Field label="Email" value={editForm.email} onChange={(v) => setEditForm(f => ({ ...f, email: v }))} />
                           <Field label="Joining Date" type="date" value={editForm.joiningDate} onChange={(v) => setEditForm(f => ({ ...f, joiningDate: v }))} />
+                          <div>
+                            <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1.5">Shift</label>
+                            <select
+                              value={editForm.shiftId}
+                              onChange={(e) => setEditForm(f => ({ ...f, shiftId: e.target.value }))}
+                              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-800 dark:text-white focus:outline-none focus:border-teal-500"
+                            >
+                              <option value="">Unassigned</option>
+                              {shifts.map((s) => (
+                                <option key={s.id} value={s.id}>{s.name} ({s.type === "DAY" ? "Day Shift" : s.type === "NIGHT" ? "Night Shift" : "General Shift"})</option>
+                              ))}
+                            </select>
+                          </div>
                         </div>
 
                         <div className="pt-2 mt-1 mb-3 border-t border-slate-100 dark:border-slate-800">
@@ -302,6 +363,7 @@ export default function AdminEmployeeDirectory() {
                       <>
                         <td className="px-5 py-3.5 font-medium text-slate-800 dark:text-white">{emp.fullName}</td>
                         <td className="px-5 py-3.5 text-slate-600 dark:text-slate-300">{emp.designation}</td>
+                        <td className="px-5 py-3.5"><ShiftBadge shift={emp.shift} /></td>
                         <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400 text-xs">
                           <div>{emp.phone || "—"}</div>
                           <div>{emp.email || ""}</div>

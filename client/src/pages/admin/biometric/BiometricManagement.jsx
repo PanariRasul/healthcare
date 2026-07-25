@@ -442,6 +442,21 @@ function formatMinutesHrs(mins) {
   return m ? `${h}h ${m}m` : `${h}h`;
 }
 
+// "HH:mm" (24-hour, as stored) -> "h:mm AM/PM" for display. Native <input
+// type="time"> fields already render in the browser's own locale format, so
+// this is only needed for the read-only table/view text.
+function formatTime12h(value) {
+  if (typeof value !== "string") return "—";
+  const match = value.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return value;
+  let hours = Number(match[1]);
+  const minutes = match[2];
+  const period = hours >= 12 ? "PM" : "AM";
+  hours = hours % 12;
+  if (hours === 0) hours = 12;
+  return `${hours}:${minutes} ${period}`;
+}
+
 function ShiftTypeBadge({ type }) {
   const meta = SHIFT_TYPE_META[type] || SHIFT_TYPE_META.GENERAL;
   const Icon = meta.icon;
@@ -724,8 +739,8 @@ function ShiftsTab() {
                       <div className="mt-1"><ShiftTypeBadge type={s.type} /></div>
                     </td>
                     <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400 whitespace-nowrap">{s.code}</td>
-                    <td className="px-4 py-3.5 text-slate-600 dark:text-slate-300 whitespace-nowrap">{s.startTime}</td>
-                    <td className="px-4 py-3.5 text-slate-600 dark:text-slate-300 whitespace-nowrap">{s.endTime}</td>
+                    <td className="px-4 py-3.5 text-slate-600 dark:text-slate-300 whitespace-nowrap">{formatTime12h(s.startTime)}</td>
+                    <td className="px-4 py-3.5 text-slate-600 dark:text-slate-300 whitespace-nowrap">{formatTime12h(s.endTime)}</td>
                     <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400 whitespace-nowrap">{formatMinutesHrs(s.graceBeforeMinutes)}</td>
                     <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400 whitespace-nowrap">{formatMinutesHrs(s.graceAfterMinutes)}</td>
                     <td className="px-4 py-3.5 font-semibold text-slate-800 dark:text-white whitespace-nowrap">{formatMinutesHrs(s.totalWorkingMinutes)}</td>
@@ -792,8 +807,8 @@ function ShiftsTab() {
             <StatusBadge active={viewShift.isActive} />
           </div>
           <div className="grid grid-cols-2 gap-3 text-sm">
-            <ViewRow label="Start Time" value={viewShift.startTime} />
-            <ViewRow label="End Time" value={viewShift.endTime} />
+            <ViewRow label="Start Time" value={formatTime12h(viewShift.startTime)} />
+            <ViewRow label="End Time" value={formatTime12h(viewShift.endTime)} />
             <ViewRow label="Grace Before" value={formatMinutesHrs(viewShift.graceBeforeMinutes)} />
             <ViewRow label="Grace After" value={formatMinutesHrs(viewShift.graceAfterMinutes)} />
             <ViewRow label="Break Duration" value={formatMinutesHrs(viewShift.breakMinutes)} />

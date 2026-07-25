@@ -2,6 +2,7 @@
 import { Router } from "express";
 import { requireAuth, requireRole } from "../auth/auth.middleware.js";
 import * as biometric from "./biometric.controller.js";
+import * as shift from "./shift.controller.js";
 
 const router = Router();
 
@@ -28,6 +29,15 @@ router.patch("/devices/:id/toggle", biometric.toggleDevice);
 router.get("/mappings", biometric.listMappings);
 router.post("/mappings", biometric.createMapping);
 router.patch("/mappings/:id/deactivate", biometric.deactivateMapping);
+router.patch("/mappings/:id/shift", shift.assignMappingShift);
+
+// Working Timings & Shift Management
+router.get("/shifts", shift.listShifts);
+router.get("/shifts/:id", shift.getShift);
+router.post("/shifts", shift.createShift);
+router.put("/shifts/:id", shift.updateShift);
+router.patch("/shifts/:id/toggle", shift.toggleShift);
+router.delete("/shifts/:id", shift.deleteShift);
 
 // Search
 router.get("/users", biometric.searchUsers);

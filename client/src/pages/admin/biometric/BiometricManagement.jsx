@@ -15,11 +15,13 @@ import { api } from "../../../lib/api";
 import {
   Fingerprint, LayoutDashboard, MonitorSmartphone, Link2, Users2, ScrollText,
   FileBarChart, Plus, Loader2, Pencil, Power, X, Check, Search, UserPlus,
+  Clock, Eye, Trash2, Sun, Moon, CalendarClock,
 } from "lucide-react";
 
 const TABS = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { key: "devices", label: "Devices", icon: MonitorSmartphone },
+  { key: "shifts", label: "Shifts", icon: Clock },
   { key: "userMapping", label: "User Mapping", icon: Link2 },
   { key: "employeeMapping", label: "Employee Mapping", icon: Users2 },
   { key: "logs", label: "Attendance Logs", icon: ScrollText },
@@ -58,6 +60,7 @@ export default function BiometricManagement() {
 
       {tab === "dashboard" && <DashboardTab />}
       {tab === "devices" && <DevicesTab />}
+      {tab === "shifts" && <ShiftsTab />}
       {tab === "userMapping" && <MappingTab kind="user" />}
       {tab === "employeeMapping" && <MappingTab kind="employee" />}
       {tab === "logs" && <LogsTab />}
@@ -378,13 +381,473 @@ function DevicesTab() {
 }
 
 // ============================================================================
+// Shared Modal
+// ============================================================================
+
+function Modal({ children, onClose, wide }) {
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className={`bg-white dark:bg-slate-900 rounded-2xl p-6 w-full shadow-2xl max-h-[90vh] overflow-y-auto ${wide ? "max-w-2xl" : "max-w-lg"}`}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Working Timings & Shift Management tab
+// ============================================================================
+
+const SHIFT_TYPE_META = {
+  DAY: { label: "Day Shift", icon: Sun, className: "bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/20" },
+  NIGHT: { label: "Night Shift", icon: Moon, className: "bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-400 border-indigo-200 dark:border-indigo-500/20" },
+  GENERAL: { label: "General Shift", icon: CalendarClock, className: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700" },
+};
+
+const emptyShiftForm = {
+  name: "",
+  code: "",
+  type: "GENERAL",
+  startTime: "09:00",
+  endTime: "17:00",
+  graceBeforeMinutes: 0,
+  graceAfterMinutes: 0,
+  breakMinutes: 0,
+  overtimeAfterMinutes: 0,
+  isActive: true,
+  description: "",
+};
+
+// Mirrors the backend's shift-span math (biometric.helper.js) just for live
+// preview in the form — the API's stored totalWorkingMinutes is still the
+// source of truth once saved.
+function previewWorkingMinutes({ startTime, endTime, breakMinutes }) {
+  const [sh, sm] = (startTime || "").split(":").map(Number);
+  const [eh, em] = (endTime || "").split(":").map(Number);
+  if ([sh, sm, eh, em].some((n) => Number.isNaN(n))) return null;
+  const start = sh * 60 + sm;
+  const end = eh * 60 + em;
+  if (start === end) return null;
+  const span = end <= start ? 1440 - start + end : end - start;
+  return Math.max(0, span - (Number(breakMinutes) || 0));
+}
+
+function formatMinutesHrs(mins) {
+  if (mins === null || mins === undefined) return "—";
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+function ShiftTypeBadge({ type }) {
+  const meta = SHIFT_TYPE_META[type] || SHIFT_TYPE_META.GENERAL;
+  const Icon = meta.icon;
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full border ${meta.className}`}>
+      <Icon className="w-3 h-3" /> {meta.label}
+    </span>
+  );
+}
+
+function StatusBadge({ active, activeLabel = "Active", inactiveLabel = "Inactive" }) {
+  return (
+    <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border whitespace-nowrap ${
+      active
+        ? "bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20"
+        : "bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700"
+    }`}>
+      {active ? activeLabel : inactiveLabel}
+    </span>
+  );
+}
+
+function ShiftForm({ form, setForm }) {
+  const preview = previewWorkingMinutes(form);
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <Field label="Shift Name" value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v }))} placeholder="Day Shift" />
+        <Field label="Shift Code" value={form.code} onChange={(v) => setForm((f) => ({ ...f, code: v }))} placeholder="DAY-01" />
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <Field label="Shift Start Time" type="time" value={form.startTime} onChange={(v) => setForm((f) => ({ ...f, startTime: v }))} />
+        <Field label="Shift End Time" type="time" value={form.endTime} onChange={(v) => setForm((f) => ({ ...f, endTime: v }))} />
+      </div>
+      {form.startTime && form.endTime && form.endTime <= form.startTime && (
+        <p className="text-xs text-indigo-500 dark:text-indigo-400 -mt-2">Crosses midnight — end time is treated as the next day.</p>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <Field label="Grace Time Before Shift Start (mins)" type="number" value={form.graceBeforeMinutes} onChange={(v) => setForm((f) => ({ ...f, graceBeforeMinutes: v }))} placeholder="e.g. 60 for 1 hour" />
+        <Field label="Grace Time After Shift Start (mins)" type="number" value={form.graceAfterMinutes} onChange={(v) => setForm((f) => ({ ...f, graceAfterMinutes: v }))} placeholder="e.g. 60 for 1 hour" />
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <Field label="Break Duration (mins, optional)" type="number" value={form.breakMinutes} onChange={(v) => setForm((f) => ({ ...f, breakMinutes: v }))} placeholder="e.g. 60" />
+        <Field label="Overtime Starts After (mins past shift end)" type="number" value={form.overtimeAfterMinutes} onChange={(v) => setForm((f) => ({ ...f, overtimeAfterMinutes: v }))} placeholder="e.g. 30" />
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1.5">Shift Type</label>
+          <select
+            value={form.type}
+            onChange={(e) => setForm((f) => ({ ...f, type: e.target.value }))}
+            className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-800 dark:text-white focus:outline-none focus:border-teal-500"
+          >
+            <option value="DAY">Day Shift</option>
+            <option value="NIGHT">Night Shift</option>
+            <option value="GENERAL">General Shift</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1.5">Status</label>
+          <select
+            value={form.isActive ? "active" : "inactive"}
+            onChange={(e) => setForm((f) => ({ ...f, isActive: e.target.value === "active" }))}
+            className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-800 dark:text-white focus:outline-none focus:border-teal-500"
+          >
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1.5">
+          Total Working Hours (Auto Calculate)
+        </label>
+        <div className="w-full bg-teal-50 dark:bg-teal-500/10 border border-teal-200 dark:border-teal-500/20 rounded-xl px-3 py-2.5 text-sm font-semibold text-teal-700 dark:text-teal-400">
+          {preview === null ? "Set a valid start and end time" : formatMinutesHrs(preview)}
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1.5">Description (optional)</label>
+        <textarea
+          value={form.description}
+          onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+          rows={2}
+          className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-800 dark:text-white focus:outline-none focus:border-teal-500"
+        />
+      </div>
+    </div>
+  );
+}
+
+function ShiftsTab() {
+  const [shifts, setShifts] = useState([]);
+  const [summary, setSummary] = useState(null);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
+
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState(emptyShiftForm);
+  const [saving, setSaving] = useState(false);
+
+  const [viewShift, setViewShift] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const fetchShifts = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const params = new URLSearchParams({ page: String(page), limit: "10" });
+      if (search) params.set("search", search);
+      if (statusFilter) params.set("status", statusFilter);
+      const data = await api.get(`/biometric/shifts?${params.toString()}`);
+      setShifts(data.shifts);
+      setTotal(data.total);
+      setSummary(data.summary);
+    } catch (err) {
+      setError(err.message || "Could not load shifts.");
+    } finally {
+      setLoading(false);
+    }
+  }, [page, search, statusFilter]);
+
+  useEffect(() => { fetchShifts(); }, [fetchShifts]);
+
+  const totalPages = Math.max(1, Math.ceil(total / 10));
+
+  const openCreate = () => {
+    setEditingId(null);
+    setForm(emptyShiftForm);
+    setShowForm(true);
+  };
+
+  const openEdit = (s) => {
+    setEditingId(s.id);
+    setForm({
+      name: s.name,
+      code: s.code,
+      type: s.type,
+      startTime: s.startTime,
+      endTime: s.endTime,
+      graceBeforeMinutes: s.graceBeforeMinutes,
+      graceAfterMinutes: s.graceAfterMinutes,
+      breakMinutes: s.breakMinutes,
+      overtimeAfterMinutes: s.overtimeAfterMinutes,
+      isActive: s.isActive,
+      description: s.description || "",
+    });
+    setShowForm(true);
+  };
+
+  const closeForm = () => {
+    setShowForm(false);
+    setEditingId(null);
+  };
+
+  const submitForm = async (e) => {
+    e.preventDefault();
+    setError(""); setInfo("");
+    if (!form.name.trim() || !form.code.trim() || !form.startTime || !form.endTime) {
+      return setError("Shift name, code, start time, and end time are all required.");
+    }
+    setSaving(true);
+    try {
+      if (editingId) {
+        await api.put(`/biometric/shifts/${editingId}`, form);
+        setInfo(`${form.name} updated.`);
+      } else {
+        await api.post("/biometric/shifts", form);
+        setInfo(`${form.name} created.`);
+      }
+      closeForm();
+      fetchShifts();
+    } catch (err) {
+      setError(err.message || "Could not save shift.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleActive = async (s) => {
+    setError(""); setInfo("");
+    try {
+      await api.patch(`/biometric/shifts/${s.id}/toggle`);
+      setInfo(`${s.name} ${s.isActive ? "deactivated" : "activated"}.`);
+      fetchShifts();
+    } catch (err) {
+      setError(err.message || "Could not update shift status.");
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setError("");
+    try {
+      await api.del(`/biometric/shifts/${deleteTarget.id}`);
+      setInfo(`${deleteTarget.name} removed.`);
+      setDeleteTarget(null);
+      fetchShifts();
+    } catch (err) {
+      setError(err.message || "Could not remove shift.");
+      setDeleteTarget(null);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <Banner error={error} info={info} />
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Card label="Total Shifts" value={summary?.totalShifts ?? "—"} />
+        <Card label="Active Shifts" value={summary?.activeShifts ?? "—"} />
+        <Card label="Employees Assigned" value={summary?.employeesAssigned ?? "—"} />
+        <Card label="Avg. Working Hours" value={summary ? `${summary.avgWorkingHours}h` : "—"} />
+      </div>
+
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex gap-2 flex-wrap flex-1">
+          <div className="relative flex-1 min-w-[200px] max-w-xs">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              value={search}
+              onChange={(e) => { setPage(1); setSearch(e.target.value); }}
+              placeholder="Search shifts..."
+              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-9 pr-3 py-2 text-sm text-slate-800 dark:text-white focus:outline-none focus:border-teal-500"
+            />
+          </div>
+          <select
+            value={statusFilter}
+            onChange={(e) => { setPage(1); setStatusFilter(e.target.value); }}
+            className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-800 dark:text-white focus:outline-none focus:border-teal-500"
+          >
+            <option value="">All statuses</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+        </div>
+        <button
+          onClick={openCreate}
+          className="flex items-center gap-2 bg-gradient-to-r from-teal-500 to-cyan-400 text-white text-sm font-semibold px-4 py-2.5 rounded-xl hover:scale-[1.02] transition-transform shadow-lg shadow-teal-500/20"
+        >
+          <Plus className="w-4 h-4" /> Add Shift
+        </button>
+      </div>
+
+      {loading ? (
+        <Loading label="Loading shifts..." />
+      ) : (
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[980px]">
+              <thead>
+                <tr className="bg-slate-50 dark:bg-slate-900/50">
+                  {["Shift Name", "Code", "Start", "End", "Grace Before", "Grace After", "Total Hours", "Status", "Actions"].map((h) => (
+                    <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {shifts.map((s) => (
+                  <tr key={s.id} className="border-t border-slate-100 dark:border-slate-800/50">
+                    <td className="px-4 py-3.5">
+                      <div className="font-medium text-slate-800 dark:text-white">{s.name}</div>
+                      <div className="mt-1"><ShiftTypeBadge type={s.type} /></div>
+                    </td>
+                    <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400 whitespace-nowrap">{s.code}</td>
+                    <td className="px-4 py-3.5 text-slate-600 dark:text-slate-300 whitespace-nowrap">{s.startTime}</td>
+                    <td className="px-4 py-3.5 text-slate-600 dark:text-slate-300 whitespace-nowrap">{s.endTime}</td>
+                    <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400 whitespace-nowrap">{formatMinutesHrs(s.graceBeforeMinutes)}</td>
+                    <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400 whitespace-nowrap">{formatMinutesHrs(s.graceAfterMinutes)}</td>
+                    <td className="px-4 py-3.5 font-semibold text-slate-800 dark:text-white whitespace-nowrap">{formatMinutesHrs(s.totalWorkingMinutes)}</td>
+                    <td className="px-4 py-3.5"><StatusBadge active={s.isActive} /></td>
+                    <td className="px-4 py-3.5">
+                      <div className="flex gap-1">
+                        <IconBtn title="View" onClick={() => setViewShift(s)}><Eye className="w-3.5 h-3.5" /></IconBtn>
+                        <IconBtn title="Edit" onClick={() => openEdit(s)}><Pencil className="w-3.5 h-3.5" /></IconBtn>
+                        <IconBtn title={s.isActive ? "Deactivate" : "Activate"} onClick={() => toggleActive(s)}><Power className="w-3.5 h-3.5" /></IconBtn>
+                        <IconBtn title="Delete" onClick={() => setDeleteTarget(s)}><Trash2 className="w-3.5 h-3.5 text-rose-500" /></IconBtn>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {shifts.length === 0 && (
+                  <tr><td colSpan={9} className="px-4 py-8 text-center text-sm text-slate-400 dark:text-slate-500">No shifts yet. Click "Add Shift" to create one.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between px-5 py-3 border-t border-slate-100 dark:border-slate-800/50 text-xs text-slate-500 dark:text-slate-400">
+              <span>Page {page} of {totalPages}</span>
+              <div className="flex gap-2">
+                <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 disabled:opacity-40">Prev</button>
+                <button disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 disabled:opacity-40">Next</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Add/Edit form */}
+      {showForm && (
+        <Modal onClose={closeForm} wide>
+          <div className="flex items-center justify-between mb-4">
+            <h4 className="font-semibold text-slate-800 dark:text-white">{editingId ? "Edit Shift" : "Add Shift"}</h4>
+            <button onClick={closeForm} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X className="w-4 h-4" /></button>
+          </div>
+          <form onSubmit={submitForm}>
+            <ShiftForm form={form} setForm={setForm} />
+            <div className="flex gap-2 mt-5">
+              <button type="submit" disabled={saving} className="bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-950 text-sm font-semibold px-4 py-2.5 rounded-xl disabled:opacity-50">
+                {saving ? "Saving..." : editingId ? "Save Changes" : "Create Shift"}
+              </button>
+              <button type="button" onClick={closeForm} className="text-sm text-slate-500 dark:text-slate-400 px-4 py-2.5">Cancel</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* View */}
+      {viewShift && (
+        <Modal onClose={() => setViewShift(null)}>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h4 className="font-semibold text-slate-800 dark:text-white">{viewShift.name}</h4>
+              <p className="text-xs text-slate-400 dark:text-slate-500">{viewShift.code}</p>
+            </div>
+            <button onClick={() => setViewShift(null)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X className="w-4 h-4" /></button>
+          </div>
+          <div className="flex gap-2 mb-4">
+            <ShiftTypeBadge type={viewShift.type} />
+            <StatusBadge active={viewShift.isActive} />
+          </div>
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <ViewRow label="Start Time" value={viewShift.startTime} />
+            <ViewRow label="End Time" value={viewShift.endTime} />
+            <ViewRow label="Grace Before" value={formatMinutesHrs(viewShift.graceBeforeMinutes)} />
+            <ViewRow label="Grace After" value={formatMinutesHrs(viewShift.graceAfterMinutes)} />
+            <ViewRow label="Break Duration" value={formatMinutesHrs(viewShift.breakMinutes)} />
+            <ViewRow label="Overtime After" value={formatMinutesHrs(viewShift.overtimeAfterMinutes)} />
+            <ViewRow label="Total Working Hours" value={formatMinutesHrs(viewShift.totalWorkingMinutes)} />
+            <ViewRow label="Employees Assigned" value={viewShift._count?.mappings ?? 0} />
+          </div>
+          {viewShift.description && (
+            <div className="mt-4">
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">Description</p>
+              <p className="text-sm text-slate-600 dark:text-slate-300">{viewShift.description}</p>
+            </div>
+          )}
+        </Modal>
+      )}
+
+      {/* Delete confirm */}
+      {deleteTarget && (
+        <Modal onClose={() => setDeleteTarget(null)}>
+          <h4 className="font-semibold text-slate-800 dark:text-white mb-2">Remove {deleteTarget.name}?</h4>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mb-5">
+            This cannot be undone. If employees are assigned or attendance history exists for this shift, removal will be blocked — deactivate it instead.
+          </p>
+          <div className="flex gap-2 justify-end">
+            <button onClick={() => setDeleteTarget(null)} className="text-sm text-slate-500 dark:text-slate-400 px-4 py-2">Cancel</button>
+            <button onClick={confirmDelete} disabled={deleting} className="bg-rose-600 text-white text-sm font-semibold px-4 py-2 rounded-xl disabled:opacity-50">
+              {deleting ? "Removing..." : "Remove"}
+            </button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function ViewRow({ label, value }) {
+  return (
+    <div>
+      <p className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">{label}</p>
+      <p className="text-slate-700 dark:text-slate-200 font-medium">{value}</p>
+    </div>
+  );
+}
+
+// ============================================================================
 // User Mapping / Employee Mapping tab (shared component, kind="user"|"employee")
 // ============================================================================
 
 function MappingTab({ kind }) {
   const isUser = kind === "user";
+
   const [mappings, setMappings] = useState([]);
   const [devices, setDevices] = useState([]);
+  const [shifts, setShifts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
@@ -421,6 +884,17 @@ function MappingTab({ kind }) {
       } catch {
         // devices list is a convenience for the assign form only; a failure
         // here shouldn't block viewing existing mappings.
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await api.get("/biometric/shifts?status=active&limit=100");
+        setShifts(data.shifts);
+      } catch {
+        // shift list is a convenience for the assign dropdown only.
       }
     })();
   }, []);
@@ -480,6 +954,17 @@ function MappingTab({ kind }) {
     }
   };
 
+  const assignShift = async (m, shiftId) => {
+    setError(""); setInfo("");
+    try {
+      await api.patch(`/biometric/mappings/${m.id}/shift`, { shiftId: shiftId || null });
+      setInfo(shiftId ? "Shift assigned." : "Shift unassigned — back to the default schedule.");
+      fetchMappings();
+    } catch (err) {
+      setError(err.message || "Could not assign shift.");
+    }
+  };
+
   return (
     <div className="space-y-4">
       <Banner error={error} info={info} />
@@ -500,7 +985,7 @@ function MappingTab({ kind }) {
             />
           </div>
           <button onClick={runSearch} disabled={searching} className="bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-950 text-sm font-semibold px-4 py-2 rounded-xl disabled:opacity-50">
-            {searching ? "Searching..." : "Search"}
+            {searching ? "Searching..." : "Add"}
           </button>
         </div>
 
@@ -554,10 +1039,10 @@ function MappingTab({ kind }) {
       ) : (
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[640px]">
+            <table className="w-full text-sm min-w-[780px]">
               <thead>
                 <tr className="bg-slate-50 dark:bg-slate-900/50">
-                  {["Name", "Biometric ID", "Device", "Status", "Actions"].map((h) => (
+                  {["Name", "Biometric ID", "Device", "Shift", "Status", "Actions"].map((h) => (
                     <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-slate-500 dark:text-slate-500 uppercase tracking-wider">{h}</th>
                   ))}
                 </tr>
@@ -570,6 +1055,17 @@ function MappingTab({ kind }) {
                     </td>
                     <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400">{m.biometricId}</td>
                     <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400">{m.device?.name || "—"}</td>
+                    <td className="px-5 py-3.5">
+                      <select
+                        value={m.shiftId || ""}
+                        onChange={(e) => assignShift(m, e.target.value)}
+                        disabled={!m.isActive}
+                        className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-700 dark:text-slate-200 focus:outline-none focus:border-teal-500 disabled:opacity-50"
+                      >
+                        <option value="">Unassigned (default)</option>
+                        {shifts.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.code})</option>)}
+                      </select>
+                    </td>
                     <td className="px-5 py-3.5">
                       <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${
                         m.isActive
@@ -587,7 +1083,7 @@ function MappingTab({ kind }) {
                   </tr>
                 ))}
                 {mappings.length === 0 && (
-                  <tr><td colSpan={5} className="px-5 py-8 text-center text-sm text-slate-400 dark:text-slate-500">No mappings yet.</td></tr>
+                  <tr><td colSpan={6} className="px-5 py-8 text-center text-sm text-slate-400 dark:text-slate-500">No mappings yet.</td></tr>
                 )}
               </tbody>
             </table>

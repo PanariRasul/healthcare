@@ -4,10 +4,12 @@ import {
   startOfDay,
   parseIST,
   computeAttendanceMetrics,
+  resolveAttendanceDate,
   toSafeDevice,
   parseDateOnly,
   pagination,
   DUPLICATE_PUNCH_WINDOW_SECONDS,
+  DEFAULT_SHIFT,
 } from "./biometric.helper.js";
 
 // ============================================================================
@@ -87,7 +89,7 @@ export async function listMappings({ search = "", deviceId, isActive } = {}) {
 
   const mappings = await prisma.biometricMapping.findMany({
     where,
-    include: { device: true },
+    include: { device: true, shift: true },
     orderBy: { createdAt: "desc" },
   });
 
@@ -120,7 +122,7 @@ export async function listMappings({ search = "", deviceId, isActive } = {}) {
   }));
 }
 
-export async function createMapping({ biometricId, deviceId, userId, employeeId }) {
+export async function createMapping({ biometricId, deviceId, userId, employeeId, shiftId }) {
   if (!biometricId || !deviceId) {
     const err = new Error("biometricId and deviceId are required.");
     err.status = 400;
@@ -137,6 +139,15 @@ export async function createMapping({ biometricId, deviceId, userId, employeeId 
     const err = new Error("Device not found.");
     err.status = 404;
     throw err;
+  }
+
+  if (shiftId) {
+    const shift = await prisma.shift.findUnique({ where: { id: shiftId } });
+    if (!shift) {
+      const err = new Error("Shift not found.");
+      err.status = 404;
+      throw err;
+    }
   }
 
   if (userId) {
@@ -158,7 +169,7 @@ export async function createMapping({ biometricId, deviceId, userId, employeeId 
 
   try {
     return await prisma.biometricMapping.create({
-      data: { biometricId, deviceId, userId: userId || null, employeeId: employeeId || null },
+      data: { biometricId, deviceId, userId: userId || null, employeeId: employeeId || null, shiftId: shiftId || null },
     });
   } catch (err) {
     if (err.code === "P2002") {
@@ -316,6 +327,14 @@ export async function processPunch(payload = {}) {
     where: { biometricId: enrollmentIdStr, isActive: true },
   });
 
+  // Attendance is calculated against the mapping's assigned Shift; an
+  // unassigned mapping falls back to the implicit default shift so existing
+  // behavior doesn't change until an admin actually assigns one.
+  const assignedShift = mapping?.shiftId
+    ? await prisma.shift.findUnique({ where: { id: mapping.shiftId } })
+    : null;
+  const shift = assignedShift || DEFAULT_SHIFT;
+
   const result = await prisma.$transaction(async (tx) => {
     const log = await tx.biometricLog.create({
       data: {
@@ -333,25 +352,23 @@ export async function processPunch(payload = {}) {
       return { status: "unmapped", message: "Punch logged, but no active mapping exists for this ID.", log };
     }
 
-    const date = startOfDay(punchDateTime);
+    const date = resolveAttendanceDate(punchDateTime, shift);
     const existing = await tx.attendance.findFirst({
       where: { userId: mapping.userId, employeeId: mapping.employeeId, date },
     });
 
     const firstPunch = existing?.firstPunch && existing.firstPunch < punchDateTime ? existing.firstPunch : (existing?.firstPunch ?? punchDateTime);
     const lastPunch = existing?.lastPunch && existing.lastPunch > punchDateTime ? existing.lastPunch : punchDateTime;
-    const metrics = computeAttendanceMetrics(
-      existing?.firstPunch ? (existing.firstPunch < punchDateTime ? existing.firstPunch : punchDateTime) : punchDateTime,
-      lastPunch
-    );
+    const metrics = computeAttendanceMetrics(firstPunch, lastPunch, shift, date);
 
     const attendanceData = {
       userId: mapping.userId,
       employeeId: mapping.employeeId,
       mappingId: mapping.id,
       deviceId: device.id,
+      shiftId: assignedShift?.id || null,
       date,
-      firstPunch: existing?.firstPunch && existing.firstPunch < punchDateTime ? existing.firstPunch : (existing?.firstPunch ?? punchDateTime),
+      firstPunch,
       lastPunch,
       ...metrics,
     };

@@ -47,12 +47,12 @@ const menuConfig = {
     { label: "Dashboard",    icon: LayoutDashboard, to: "/doctor/opd/dashboard" },
     { label: "OPD Patients", icon: Stethoscope,     to: "/doctor/opd/patients"  },
     { label: "Follow-Ups",   icon: CalendarClock,   to: "/doctor/opd/followups" },
-    { label: "My Profile",   icon: UserRound,       to: "/profile" },
+    // { label: "My Profile",   icon: UserRound,       to: "/profile" },
   ],
   "doctor-IPD": [
     { label: "Dashboard", icon: LayoutDashboard, to: "/doctor/ipd/dashboard" },
     { label: "IPD Patients", icon: BedDouble, to: "/doctor/ipd" },
-    { label: "My Profile",   icon: UserRound, to: "/profile" },
+    // { label: "My Profile",   icon: UserRound, to: "/profile" },
     { label: "Follow-Ups",   icon: CalendarClock, to: "/doctor/ipd/followups" },
   ],
   "pharmacy-Pharmacy": [
@@ -68,30 +68,94 @@ const menuConfig = {
     { label: "Employee Directory", icon: Building2,       to: "/admin/employees"  },
     { label: "Patient Analytics",  icon: Users,           to: "/admin/patients"   },
     { label: "Pharmacy Analytics", icon: Pill,            to: "/admin/pharmacy"   },
-    { label: "My Profile",         icon: UserRound,       to: "/admin/profile" },
     { label: "Working Days",         icon: CalendarClock,       to: "/admin/workingdays" },
     { label: "Biometric Management",  icon: Fingerprint,   to: "/admin/biometric" },
     { label: "Salary Management",  icon: Wallet ,   to: "/admin/salary-management" },
     { label: "Shift Assignment",  icon: UserPlus ,   to: "/admin/shift-assign" },
+    { label: "My Profile",         icon: UserRound,       to: "/admin/profile" },
   ],
   "manager-MANAGER": [
     { label: "Dashboard",          icon: LayoutDashboard, to: "/manager/dashboard"    },
-    { label: "Employee Directory", icon: Building2,       to: "/manager/employees"    },
+    // { label: "Employee Directory", icon: Building2,       to: "/manager/employees"    },
     { label: "Shift Assignment",   icon: UserPlus,        to: "/manager/shift-assign" },
   ],
 };
   
+// Where each OPD/IPD tab should land when a receptionist/doctor switches
+// modules from the Sidebar (rather than logging in again).
+const HOSPITAL_DASHBOARD_ROUTES = {
+  "receptionist-OPD": "/opd-dashboard",
+  "receptionist-IPD": "/ipd-dashboard",
+  "doctor-OPD": "/doctor/opd/dashboard",
+  "doctor-IPD": "/doctor/ipd/dashboard",
+};
+
 export default function Sidebar({ collapsed, setCollapsed }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const key   = user ? `${user.role}-${user.module}` : "";
+  const isPharmacy    = user?.role === "pharmacy";
+  const isManager     = user?.role === "manager";
+  const isAdmin       = user?.role === "admin";
+  // Receptionists and doctors can now be assigned OPD, IPD, or both from a
+  // single login — the Sidebar shows tabs for whichever they have.
+  const isHospitalRole = user?.role === "receptionist" || user?.role === "doctor";
+  const hospitalModules = (user?.modules || []).filter((m) => m === "OPD" || m === "IPD");
+
+  const [activeModule, setActiveModule] = useState(() => {
+    if (!user || !isHospitalRole) return null;
+    const stored = user.id ? localStorage.getItem(`activeModule:${user.id}`) : null;
+    if (stored && hospitalModules.includes(stored)) return stored;
+    return hospitalModules.includes("OPD") ? "OPD" : hospitalModules[0] || null;
+  });
+
+  // Keep activeModule in sync if the user object loads/changes after mount
+  // (e.g. on first app load before context has hydrated).
+  useEffect(() => {
+    if (!user || !isHospitalRole) return;
+    if (activeModule && hospitalModules.includes(activeModule)) return;
+    const stored = user.id ? localStorage.getItem(`activeModule:${user.id}`) : null;
+    const next = stored && hospitalModules.includes(stored)
+      ? stored
+      : hospitalModules.includes("OPD") ? "OPD" : hospitalModules[0] || null;
+    setActiveModule(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, user?.modules?.join(",")]);
+
+  const isOPD = isHospitalRole ? activeModule === "OPD" : false;
+
+  const contextForKey = isHospitalRole
+    ? activeModule
+    : isPharmacy
+    ? "Pharmacy"
+    : isAdmin
+    ? "ADMIN"
+    : isManager
+    ? "MANAGER"
+    : "";
+
+  const key   = user ? `${user.role}-${contextForKey}` : "";
   const links = menuConfig[key] || [];
 
-  const isOPD      = user?.module === "OPD";
-  const isPharmacy = user?.module === "Pharmacy";
-  const isManager  = user?.role === "manager";
+  const moduleLabel = isPharmacy
+    ? "Pharmacy"
+    : isManager
+    ? "Manager"
+    : isAdmin
+    ? "Admin"
+    : isHospitalRole
+    ? activeModule
+    : "";
+
+  const handleModuleSwitch = (mod) => {
+    if (!user || mod === activeModule) return;
+    setActiveModule(mod);
+    if (user.id) localStorage.setItem(`activeModule:${user.id}`, mod);
+    const dest = HOSPITAL_DASHBOARD_ROUTES[`${user.role}-${mod}`];
+    if (dest) navigate(dest);
+    setMobileOpen(false);
+  };
 
   const handleLogout = () => {
     logout();
@@ -137,6 +201,39 @@ export default function Sidebar({ collapsed, setCollapsed }) {
         </button>
       </div>
 
+      {/* OPD / IPD module tabs — only for receptionist/doctor accounts
+          assigned to both modules. Selecting a tab swaps the menu below and
+          jumps to that module's dashboard; the choice persists per-user
+          until they switch again. */}
+      {isHospitalRole && hospitalModules.length > 1 && (
+        <div className={`flex-shrink-0 ${mini ? "px-2 pt-3" : "px-4 pt-4"}`}>
+          <div className={`flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/50 ${mini ? "flex-col" : ""}`}>
+            {["OPD", "IPD"].filter((m) => hospitalModules.includes(m)).map((m) => {
+              const Icon = m === "OPD" ? Stethoscope : BedDouble;
+              const isActiveTab = activeModule === m;
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => handleModuleSwitch(m)}
+                  title={mini ? `${m} module` : undefined}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all ${
+                    mini ? "w-full px-0" : ""
+                  } ${
+                    isActiveTab
+                      ? "bg-white dark:bg-slate-900 text-teal-700 dark:text-teal-400 shadow-sm"
+                      : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={isActiveTab ? 2.5 : 2} />
+                  {!mini && <span>{m}</span>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Module badge */}
       {!mini && user && (
         <div className="px-4 pt-4 pb-2 flex-shrink-0">
@@ -153,7 +250,7 @@ export default function Sidebar({ collapsed, setCollapsed }) {
               : isPharmacy ? <Pill className="w-3.5 h-3.5 flex-shrink-0" />
               : isOPD ? <Stethoscope className="w-3.5 h-3.5 flex-shrink-0" />
               : <BedDouble className="w-3.5 h-3.5 flex-shrink-0" />}
-            <span>{user.module} Module</span>
+            <span>{moduleLabel} Module</span>
             <span className="ml-auto capitalize text-[10px] opacity-70 font-medium">{user.role}</span>
           </div>
         </div>

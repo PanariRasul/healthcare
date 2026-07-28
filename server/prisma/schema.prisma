@@ -11,18 +11,19 @@ datasource db {
 // directory (nurses, ward boys, cleaners, etc.) — no password, no Role, no
 // auth involvement at all. Kept entirely separate from User on purpose.
 model Employee {
-  id              String    @id @default(cuid())
-  fullName        String
-  designation     String // free text: "Nurse", "Ward Boy", "Cleaner", etc. — not an enum, so new job titles don't need a migration
-  department      String? // free text: "OPD", "IPD", "Housekeeping", etc. — separate from designation (job title vs. team/section)
-  phone           String?
-  email           String?
-  joiningDate     DateTime  @db.Date
-  isActive        Boolean   @default(true)
-  notes           String?
-  shiftId         String?
-  shift           Shift?    @relation(fields: [shiftId], references: [id])
-  shiftAssignedAt DateTime?
+  id                 String    @id @default(cuid())
+  fullName           String
+  designation        String // free text: "Nurse", "Ward Boy", "Cleaner", etc. — not an enum, so new job titles don't need a migration
+  department         String? // free text: "OPD", "IPD", "Housekeeping", etc. — separate from designation (job title vs. team/section)
+  phone              String?
+  email              String?
+  joiningDate        DateTime  @db.Date
+  isActive           Boolean   @default(true)
+  notes              String?
+  shiftId            String?
+  shift              Shift?    @relation(fields: [shiftId], references: [id])
+  shiftEffectiveFrom DateTime? @db.Date // date the current shift starts applying
+  shiftEffectiveTo   DateTime? @db.Date // optional end date; null = ongoing/indefinite
 
   // Salary/bank details — entirely optional. Directory records can exist
   // with none of this filled in; nothing here is required to create or
@@ -523,12 +524,14 @@ enum ShiftType {
 }
 
 model ShiftAssignmentHistory {
-  id              String   @id @default(cuid())
+  id              String    @id @default(cuid())
   employeeId      String
   previousShiftId String?
   newShiftId      String?
+  effectiveFrom   DateTime? @db.Date // date this particular change starts applying
+  effectiveTo     DateTime? @db.Date // optional end date; null = ongoing/indefinite
   changedById     String? // User.id of the admin who made the change; null if made by an automated process
-  changedAt       DateTime @default(now())
+  changedAt       DateTime  @default(now())
 
   employee      Employee @relation(fields: [employeeId], references: [id])
   previousShift Shift?   @relation("PreviousShiftHistory", fields: [previousShiftId], references: [id])

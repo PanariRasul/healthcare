@@ -11,7 +11,7 @@ const SEED_USERS = [
   {
     fullName: "Super Admin",
     email: "admin@gmail.com",
-    phone: "919876543209",
+    phone: "919876543209",    
     password: "123456",
     role: "ADMIN",
     // Admins aren't assigned to a Module — see auth.controller.js: "ADMIN"

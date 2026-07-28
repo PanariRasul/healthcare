@@ -18,13 +18,29 @@ import { sendOtpSms } from "./sms.service.js";
 import { normalizePhone } from "./sms.service.js";
 
 const VALID_ROLES = ["ADMIN", "DOCTOR", "RECEPTIONIST", "PHARMACY", "MANAGER"];
+// VALID_MODULES is still used for *assigning* modules to a user (register,
+// admin staff management, etc). It is separate from login contexts below.
 const VALID_MODULES = ["OPD", "IPD", "PHARMACY"];
+
 // "ADMIN" and "MANAGER" aren't real Modules — those users aren't assigned to
 // one. They're login contexts the Login page sends so send-otp/verify-otp
 // know to check the user's ROLE instead of their modules array. See
 // sendOtp/verifyOtpAndLogin.
 const ROLE_BASED_LOGIN_CONTEXTS = ["ADMIN", "MANAGER"];
-const VALID_LOGIN_CONTEXTS = [...VALID_MODULES, ...ROLE_BASED_LOGIN_CONTEXTS];
+
+// "HOSPITAL" is a merged login context introduced so receptionists/doctors
+// no longer need two separate logins (one for OPD, one for IPD). The Login
+// page now sends module: "HOSPITAL" for these roles, and we let the user in
+// as long as they're assigned to AT LEAST ONE of OPD/IPD. Which module(s)
+// they can actually use is still enforced per-request by requireModule
+// (using the full `modules` array baked into the JWT), and the Sidebar lets
+// them switch between OPD/IPD tabs post-login without logging in again.
+const HOSPITAL_LOGIN_CONTEXT = "HOSPITAL";
+
+// Module-shaped login contexts (as opposed to role-shaped ones above).
+const MODULE_LOGIN_CONTEXTS = ["PHARMACY", HOSPITAL_LOGIN_CONTEXT];
+
+const VALID_LOGIN_CONTEXTS = [...MODULE_LOGIN_CONTEXTS, ...ROLE_BASED_LOGIN_CONTEXTS];
 
 /* ===================== OTP BYPASS CONST — DISABLED FOR DEV ================
 const OTP_BYPASS_CODE = "969696";
@@ -172,6 +188,12 @@ export async function sendOtp(req, res) {
       if (user.role !== moduleUpper) {
         return res.status(403).json({ message: `This account does not have ${moduleUpper.toLowerCase()} access.` });
       }
+    } else if (moduleUpper === HOSPITAL_LOGIN_CONTEXT) {
+      // Merged OPD/IPD login — let them in if they're assigned to either one.
+      const hasHospitalAccess = user.modules.some((m) => m === "OPD" || m === "IPD");
+      if (!hasHospitalAccess) {
+        return res.status(403).json({ message: "This account is not assigned to the OPD or IPD module." });
+      }
     } else if (!user.modules.includes(moduleUpper)) {
       return res.status(403).json({ message: "This account is not assigned to the selected module." });
     }
@@ -281,6 +303,13 @@ export async function verifyOtpAndLogin(req, res) {
       if (user.role !== moduleUpper) {
         console.warn(`[OTP-VERIFY] User ${user.id} does not have the ${moduleUpper} role.`);
         return res.status(403).json({ message: `This account does not have ${moduleUpper.toLowerCase()} access.` });
+      }
+    } else if (moduleUpper === HOSPITAL_LOGIN_CONTEXT) {
+      // Merged OPD/IPD login — let them in if they're assigned to either one.
+      const hasHospitalAccess = user.modules.some((m) => m === "OPD" || m === "IPD");
+      if (!hasHospitalAccess) {
+        console.warn(`[OTP-VERIFY] User ${user.id} is not assigned to OPD or IPD. Their modules: ${user.modules}`);
+        return res.status(403).json({ message: "This account is not assigned to the OPD or IPD module." });
       }
     } else if (!user.modules.includes(moduleUpper)) {
       console.warn(`[OTP-VERIFY] User ${user.id} is not assigned to module ${moduleUpper}. Their modules: ${user.modules}`);

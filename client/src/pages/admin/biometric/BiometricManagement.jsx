@@ -24,7 +24,7 @@ const TABS = [
   { key: "shifts", label: "Shifts", icon: Clock },
   { key: "userMapping", label: "User Mapping", icon: Link2 },
   { key: "employeeMapping", label: "Employee Mapping", icon: Users2 },
-  { key: "logs", label: "Attendance Logs", icon: ScrollText },
+  // { key: "logs", label: "Attendance Logs", icon: ScrollText },
   { key: "report", label: "Attendance Report", icon: FileBarChart },
 ];
 

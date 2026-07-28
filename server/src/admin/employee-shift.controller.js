@@ -116,7 +116,7 @@ async function assertShiftIsAssignable(shiftId) {
 export async function assignShift(req, res) {
   try {
     const { id } = req.params;
-    const { shiftId } = req.body;
+    const { shiftId, effectiveFrom, effectiveTo } = req.body;
 
     const employee = await prisma.employee.findUnique({ where: { id } });
     if (!employee) return res.status(404).json({ message: "Employee not found." });
@@ -130,10 +130,16 @@ export async function assignShift(req, res) {
     }
 
     const now = new Date();
+    const fromDate = effectiveFrom ? new Date(effectiveFrom) : now;
+    const toDate = effectiveTo ? new Date(effectiveTo) : null;
+    if (toDate && toDate < fromDate) {
+      return res.status(400).json({ message: "\"To\" date can't be before the \"From\" date." });
+    }
+
     const [updated] = await prisma.$transaction([
       prisma.employee.update({
         where: { id },
-        data: { shiftId: nextShiftId, shiftAssignedAt: now },
+        data: { shiftId: nextShiftId, shiftEffectiveFrom: fromDate, shiftEffectiveTo: toDate },
         include: { shift: true },
       }),
       prisma.shiftAssignmentHistory.create({
@@ -141,6 +147,8 @@ export async function assignShift(req, res) {
           employeeId: id,
           previousShiftId,
           newShiftId: nextShiftId,
+          effectiveFrom: fromDate,
+          effectiveTo: toDate,
           changedById: req.user?.id || null,
           changedAt: now,
         },
@@ -161,7 +169,7 @@ export async function assignShift(req, res) {
 // the audit trail reads the same as if they'd been changed individually.
 export async function bulkAssignShift(req, res) {
   try {
-    const { employeeIds, shiftId } = req.body;
+    const { employeeIds, shiftId, effectiveFrom, effectiveTo } = req.body;
     if (!Array.isArray(employeeIds) || employeeIds.length === 0) {
       return res.status(400).json({ message: "Select at least one employee." });
     }
@@ -177,6 +185,11 @@ export async function bulkAssignShift(req, res) {
     }
 
     const now = new Date();
+    const fromDate = effectiveFrom ? new Date(effectiveFrom) : now;
+    const toDate = effectiveTo ? new Date(effectiveTo) : null;
+    if (toDate && toDate < fromDate) {
+      return res.status(400).json({ message: "\"To\" date can't be before the \"From\" date." });
+    }
     const changedById = req.user?.id || null;
 
     const ops = [];
@@ -187,12 +200,17 @@ export async function bulkAssignShift(req, res) {
         continue;
       }
       ops.push(
-        prisma.employee.update({ where: { id: emp.id }, data: { shiftId: shift.id, shiftAssignedAt: now } }),
+        prisma.employee.update({
+          where: { id: emp.id },
+          data: { shiftId: shift.id, shiftEffectiveFrom: fromDate, shiftEffectiveTo: toDate },
+        }),
         prisma.shiftAssignmentHistory.create({
           data: {
             employeeId: emp.id,
             previousShiftId: emp.shiftId || null,
             newShiftId: shift.id,
+            effectiveFrom: fromDate,
+            effectiveTo: toDate,
             changedById,
             changedAt: now,
           },

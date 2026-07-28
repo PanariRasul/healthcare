@@ -5,16 +5,14 @@ import { useAuth } from "../../context/AuthContext";
 
 const MODULES = [
   {
-    id: "OPD",
-    label: "Outpatient",
-    description: "OPD Desk & Consults",
+    // Merged login context — used to cover both OPD and IPD in one login.
+    // Which of the two the user actually lands on/sees is determined by
+    // their assigned modules (and can be switched from the Sidebar tabs
+    // afterward), not by a separate login.
+    id: "HOSPITAL",
+    label: "OPD / IPD",
+    description: "Reception & Doctor Console",
     icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2",
-  },
-  {
-    id: "IPD",
-    label: "Inpatient",
-    description: "Admissions & Beds",
-    icon: "M19 16v1a1 1 0 01-1 1H6a1 1 0 01-1-1v-1m14-4v2m-14-2v2m14-5V7a2 2 0 00-2-2H6a2 2 0 00-2 2v3m16 0h-2M4 10h2m11 4H7",
   },
   {
     id: "Pharmacy",
@@ -38,21 +36,35 @@ const MODULES = [
 
 const API_BASE = `${import.meta.env.VITE_API_URL || ""}/api`;
 
-function routeFor(role, module) {
-  const r = String(role || "").toLowerCase();
-  const m = String(module || "").toUpperCase();
+// `user` is the full user object returned by the API (includes `modules`).
+// `loginContext` is whatever was selected on the login screen
+// (HOSPITAL / Pharmacy / ADMIN / MANAGER).
+function routeFor(user, loginContext) {
+  const r = String(user?.role || "").toLowerCase();
+  const ctx = String(loginContext || "").toUpperCase();
+
   if (r === "admin") return "/admin/dashboard";
   if (r === "manager") return "/manager/dashboard";
-  if (r === "receptionist" && m === "OPD") return "/opd-dashboard";
-  if (r === "receptionist" && m === "IPD") return "/ipd-dashboard";
-  if (r === "doctor" && m === "OPD") return "/doctor/opd/dashboard";
-  if (r === "doctor" && m === "IPD") return "/doctor/ipd/dashboard";
   if (r === "pharmacy") return "/pharmacy-dashboard";
+
+  if (ctx === "HOSPITAL" && (r === "receptionist" || r === "doctor")) {
+    // A user can now be assigned OPD, IPD, or both from a single login.
+    // Prefer OPD as the default landing module when both are present;
+    // the Sidebar's OPD/IPD tabs let them switch afterward.
+    const modules = user?.modules || [];
+    const landingModule = modules.includes("OPD") ? "OPD" : modules.includes("IPD") ? "IPD" : null;
+
+    if (r === "receptionist" && landingModule === "OPD") return "/opd-dashboard";
+    if (r === "receptionist" && landingModule === "IPD") return "/ipd-dashboard";
+    if (r === "doctor" && landingModule === "OPD") return "/doctor/opd/dashboard";
+    if (r === "doctor" && landingModule === "IPD") return "/doctor/ipd/dashboard";
+  }
+
   return "/login";
 }
 
 export default function Login() {
-  const [module, setModule] = useState("OPD");
+  const [module, setModule] = useState("HOSPITAL");
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
@@ -134,7 +146,7 @@ export default function Login() {
 
       try {
         setAuth(data.token, data.user, module.toUpperCase());
-        navigate(routeFor(data.user.role, module.toUpperCase()));
+        navigate(routeFor(data.user, module.toUpperCase()));
       } catch (authErr) {
         console.error("setAuth/navigate failed after dev auto-login:", authErr);
         setError("Signed in, but couldn't start your session. Please refresh and try again.");
@@ -194,7 +206,7 @@ export default function Login() {
       } else {
         try {
           setAuth(data.token, data.user, module.toUpperCase());
-          navigate(routeFor(data.user.role, module.toUpperCase()));
+          navigate(routeFor(data.user, module.toUpperCase()));
         } catch (authErr) {
           console.error("setAuth/navigate failed after OTP verification:", authErr);
           setError("Signed in, but couldn't start your session. Please refresh and try again.");

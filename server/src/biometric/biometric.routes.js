@@ -12,9 +12,22 @@ const router = Router();
 // BEFORE the router.use(requireAuth, ...) below so it's exempt from it. ──
 router.post("/punch", biometric.punch);
 
-// Everything below requires an authenticated ADMIN — same pattern as
-// admin.routes.js.
-router.use(requireAuth, requireRole("ADMIN"));
+// Everything below at minimum requires an authenticated user.
+router.use(requireAuth);
+
+// Working Timings & Shift Management — READ access only is opened up to
+// MANAGER too, since the Shift Assignment page (used by managers) needs to
+// populate its "assign to shift" dropdown. Mutating the shifts themselves
+// (create/edit/toggle/delete) stays ADMIN-only.
+router.get("/shifts", requireRole("ADMIN", "MANAGER"), shift.listShifts);
+router.get("/shifts/:id", requireRole("ADMIN", "MANAGER"), shift.getShift);
+router.post("/shifts", requireRole("ADMIN"), shift.createShift);
+router.put("/shifts/:id", requireRole("ADMIN"), shift.updateShift);
+router.patch("/shifts/:id/toggle", requireRole("ADMIN"), shift.toggleShift);
+router.delete("/shifts/:id", requireRole("ADMIN"), shift.deleteShift);
+
+// Everything else below stays ADMIN-only — same as before.
+router.use(requireRole("ADMIN"));
 
 // Dashboard
 router.get("/dashboard", biometric.getDashboard);
@@ -30,14 +43,6 @@ router.get("/mappings", biometric.listMappings);
 router.post("/mappings", biometric.createMapping);
 router.patch("/mappings/:id/deactivate", biometric.deactivateMapping);
 router.patch("/mappings/:id/shift", shift.assignMappingShift);
-
-// Working Timings & Shift Management
-router.get("/shifts", shift.listShifts);
-router.get("/shifts/:id", shift.getShift);
-router.post("/shifts", shift.createShift);
-router.put("/shifts/:id", shift.updateShift);
-router.patch("/shifts/:id/toggle", shift.toggleShift);
-router.delete("/shifts/:id", shift.deleteShift);
 
 // Search
 router.get("/users", biometric.searchUsers);

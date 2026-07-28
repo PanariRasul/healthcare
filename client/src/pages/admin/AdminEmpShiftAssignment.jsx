@@ -79,6 +79,24 @@ function fmtDate(value) {
   return new Date(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
+// yyyy-mm-dd for <input type="date">
+function toDateInput(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toISOString().slice(0, 10);
+}
+
+function ShiftPeriod({ from, to }) {
+  if (!from) return <span className="text-slate-400 dark:text-slate-500">—</span>;
+  return (
+    <span className="whitespace-nowrap">
+      {fmtDate(from)} <span className="text-slate-300 dark:text-slate-600">→</span>{" "}
+      {to ? fmtDate(to) : <span className="text-slate-400 dark:text-slate-500 italic">Ongoing</span>}
+    </span>
+  );
+}
+
 export default function AdminEmployeeShiftAssignment() {
   const [employees, setEmployees] = useState([]);
   const [shifts, setShifts] = useState([]);
@@ -97,10 +115,14 @@ export default function AdminEmployeeShiftAssignment() {
 
   const [singleTarget, setSingleTarget] = useState(null); // employee being changed
   const [singleShiftId, setSingleShiftId] = useState("");
+  const [singleFrom, setSingleFrom] = useState("");
+  const [singleTo, setSingleTo] = useState("");
   const [singleSaving, setSingleSaving] = useState(false);
 
   const [showBulk, setShowBulk] = useState(false);
   const [bulkShiftId, setBulkShiftId] = useState("");
+  const [bulkFrom, setBulkFrom] = useState(toDateInput(new Date()));
+  const [bulkTo, setBulkTo] = useState("");
   const [bulkSaving, setBulkSaving] = useState(false);
 
   const [historyEmp, setHistoryEmp] = useState(null);
@@ -164,14 +186,24 @@ export default function AdminEmployeeShiftAssignment() {
   const openSingle = (emp) => {
     setSingleTarget(emp);
     setSingleShiftId(emp.shiftId || "");
+    setSingleFrom(toDateInput(emp.shiftEffectiveFrom) || toDateInput(new Date()));
+    setSingleTo(toDateInput(emp.shiftEffectiveTo));
   };
 
   const confirmSingle = async () => {
     if (!singleTarget) return;
+    if (singleTo && singleFrom && singleTo < singleFrom) {
+      setError("\"To\" date can't be before the \"From\" date.");
+      return;
+    }
     setError(""); setInfo("");
     setSingleSaving(true);
     try {
-      await api.put(`/admin/employee-shifts/${singleTarget.id}`, { shiftId: singleShiftId || null });
+      await api.put(`/admin/employee-shifts/${singleTarget.id}`, {
+        shiftId: singleShiftId || null,
+        effectiveFrom: singleFrom || null,
+        effectiveTo: singleTo || null,
+      });
       setInfo(`${singleTarget.fullName}'s shift updated.`);
       setSingleTarget(null);
       fetchEmployees();
@@ -184,16 +216,24 @@ export default function AdminEmployeeShiftAssignment() {
 
   const confirmBulk = async () => {
     if (!bulkShiftId || selectedIds.size === 0) return;
+    if (bulkTo && bulkFrom && bulkTo < bulkFrom) {
+      setError("\"To\" date can't be before the \"From\" date.");
+      return;
+    }
     setError(""); setInfo("");
     setBulkSaving(true);
     try {
       const res = await api.post("/admin/employee-shifts/bulk-assign", {
         employeeIds: Array.from(selectedIds),
         shiftId: bulkShiftId,
+        effectiveFrom: bulkFrom || null,
+        effectiveTo: bulkTo || null,
       });
       setInfo(res.message);
       setShowBulk(false);
       setBulkShiftId("");
+      setBulkFrom(toDateInput(new Date()));
+      setBulkTo("");
       setSelectedIds(new Set());
       fetchEmployees();
     } catch (err) {
@@ -292,7 +332,7 @@ export default function AdminEmployeeShiftAssignment() {
                       {allOnPageSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
                     </button>
                   </th>
-                  {["Employee Name", "Designation", "Current Shift", "Assigned Date", "Status", "Actions"].map((h) => (
+                  {["Employee Name", "Designation", "Current Shift", "Effective Period (From → To)", "Status", "Actions"].map((h) => (
                     <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -308,7 +348,9 @@ export default function AdminEmployeeShiftAssignment() {
                     <td className="px-4 py-3.5 font-medium text-slate-800 dark:text-white whitespace-nowrap">{emp.fullName}</td>
                     <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400 whitespace-nowrap">{emp.designation || "—"}</td>
                     <td className="px-4 py-3.5"><ShiftBadge shift={emp.shift} /></td>
-                    <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400 whitespace-nowrap">{fmtDate(emp.shiftAssignedAt)}</td>
+                    <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400">
+                      <ShiftPeriod from={emp.shiftEffectiveFrom} to={emp.shiftEffectiveTo} />
+                    </td>
                     <td className="px-4 py-3.5">
                       <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border whitespace-nowrap ${
                         emp.isActive
@@ -374,8 +416,29 @@ export default function AdminEmployeeShiftAssignment() {
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1.5">New Shift</label>
             <ShiftSelect shifts={shifts} value={singleShiftId} onChange={setSingleShiftId} placeholder="Unassign (no shift)" />
           </div>
+          <div className="mb-5 grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1.5">Effective From</label>
+              <input
+                type="date"
+                value={singleFrom}
+                onChange={(e) => setSingleFrom(e.target.value)}
+                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-800 dark:text-white focus:outline-none focus:border-teal-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1.5">Effective To <span className="normal-case font-normal text-slate-400">(optional)</span></label>
+              <input
+                type="date"
+                value={singleTo}
+                min={singleFrom || undefined}
+                onChange={(e) => setSingleTo(e.target.value)}
+                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-800 dark:text-white focus:outline-none focus:border-teal-500"
+              />
+            </div>
+          </div>
           <p className="text-sm text-slate-500 dark:text-slate-400 mb-5">
-            This will change {singleTarget.fullName}'s shift and record it in their shift history. Continue?
+            This will change {singleTarget.fullName}'s shift{singleTo ? " for the selected period" : " starting the selected date"} and record it in their shift history. Continue?
           </p>
           <div className="flex gap-2 justify-end">
             <button onClick={() => setSingleTarget(null)} className="text-sm text-slate-500 dark:text-slate-400 px-4 py-2">Cancel</button>
@@ -405,8 +468,29 @@ export default function AdminEmployeeShiftAssignment() {
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1.5">Assign to Shift</label>
             <ShiftSelect shifts={shifts} value={bulkShiftId} onChange={setBulkShiftId} />
           </div>
+          <div className="mb-5 grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1.5">Effective From</label>
+              <input
+                type="date"
+                value={bulkFrom}
+                onChange={(e) => setBulkFrom(e.target.value)}
+                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-800 dark:text-white focus:outline-none focus:border-teal-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1.5">Effective To <span className="normal-case font-normal text-slate-400">(optional)</span></label>
+              <input
+                type="date"
+                value={bulkTo}
+                min={bulkFrom || undefined}
+                onChange={(e) => setBulkTo(e.target.value)}
+                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-800 dark:text-white focus:outline-none focus:border-teal-500"
+              />
+            </div>
+          </div>
           <p className="text-sm text-slate-500 dark:text-slate-400 mb-5">
-            This will move all {selectedIds.size} selected employee{selectedIds.size === 1 ? "" : "s"} onto the chosen shift and record the change in each of their shift histories. Continue?
+            This will move all {selectedIds.size} selected employee{selectedIds.size === 1 ? "" : "s"} onto the chosen shift{bulkTo ? " for the selected period" : " starting the selected date"} and record the change in each of their shift histories. Continue?
           </p>
           <div className="flex gap-2 justify-end">
             <button onClick={() => setShowBulk(false)} className="text-sm text-slate-500 dark:text-slate-400 px-4 py-2">Cancel</button>
@@ -440,7 +524,7 @@ export default function AdminEmployeeShiftAssignment() {
               <table className="w-full text-sm min-w-[560px]">
                 <thead>
                   <tr className="bg-slate-50 dark:bg-slate-900/50">
-                    {["Previous Shift", "New Shift", "Changed By", "Date & Time"].map((h) => (
+                    {["Previous Shift", "New Shift", "Effective Period", "Changed By", "Date & Time"].map((h) => (
                       <th key={h} className="text-left px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -450,6 +534,7 @@ export default function AdminEmployeeShiftAssignment() {
                     <tr key={h.id} className="border-t border-slate-100 dark:border-slate-800/50">
                       <td className="px-3 py-2.5 text-slate-600 dark:text-slate-300">{h.previousShift?.name || "Unassigned"}</td>
                       <td className="px-3 py-2.5 text-slate-800 dark:text-white font-medium">{h.newShift?.name || "Unassigned"}</td>
+                      <td className="px-3 py-2.5 text-slate-500 dark:text-slate-400"><ShiftPeriod from={h.effectiveFrom} to={h.effectiveTo} /></td>
                       <td className="px-3 py-2.5 text-slate-500 dark:text-slate-400">{h.changedBy?.fullName || "—"}</td>
                       <td className="px-3 py-2.5 text-slate-500 dark:text-slate-400 whitespace-nowrap">{new Date(h.changedAt).toLocaleString()}</td>
                     </tr>

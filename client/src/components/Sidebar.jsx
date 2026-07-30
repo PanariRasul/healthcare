@@ -1,5 +1,4 @@
 // client/src/components/Sidebar.jsx
-// Replace your existing Sidebar.jsx with this file
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -12,7 +11,6 @@ import {
   LogOut,
   ChevronLeft,
   ChevronRight,
-  Activity,
   Menu,
   X,
   Pill,
@@ -25,64 +23,59 @@ import {
   Building2,
   Fingerprint,
   Briefcase,
- 
+  ActivitySquare,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 
 const menuConfig = {
   "receptionist-OPD": [
-    { label: "Dashboard",        icon: LayoutDashboard, to: "/opd-dashboard" },
-    { label: "Register Patient", icon: UserPlus,        to: "/opd/register"  },
-    { label: "All Patients",     icon: Users,           to: "/opd/patients"  },
-    { label: "Follow-Ups",       icon: CalendarClock,   to: "/opd/followups" },
+    { label: "Dashboard", icon: LayoutDashboard, to: "/opd-dashboard" },
+    { label: "Register Patient", icon: UserPlus, to: "/opd/register" },
+    { label: "All Patients", icon: Users, to: "/opd/patients" },
+    { label: "Follow-Ups", icon: CalendarClock, to: "/opd/followups" },
   ],
   "receptionist-IPD": [
-    { label: "Dashboard",     icon: LayoutDashboard, to: "/ipd-dashboard" },
-    { label: "Admit Patient", icon: BedDouble,       to: "/ipd/admit"     },
-    { label: "All Patients",  icon: Users,           to: "/ipd/patients"  },
-    { label: "Payments",      icon: Wallet,          to: "/ipd/payments"  },
-    { label: "Follow Ups",    icon: CalendarClock,   to: "/ipd/followups"  },
+    { label: "Dashboard", icon: LayoutDashboard, to: "/ipd-dashboard" },
+    { label: "Admit Patient", icon: BedDouble, to: "/ipd/admit" },
+    { label: "All Patients", icon: Users, to: "/ipd/patients" },
+    { label: "Payments", icon: Wallet, to: "/ipd/payments" },
+    { label: "Follow Ups", icon: CalendarClock, to: "/ipd/followups" },
   ],
   "doctor-OPD": [
-    { label: "Dashboard",    icon: LayoutDashboard, to: "/doctor/opd/dashboard" },
-    { label: "OPD Patients", icon: Stethoscope,     to: "/doctor/opd/patients"  },
-    { label: "Follow-Ups",   icon: CalendarClock,   to: "/doctor/opd/followups" },
-    // { label: "My Profile",   icon: UserRound,       to: "/profile" },
+    { label: "Dashboard", icon: LayoutDashboard, to: "/doctor/opd/dashboard" },
+    { label: "OPD Patients", icon: Stethoscope, to: "/doctor/opd/patients" },
+    { label: "Follow-Ups", icon: CalendarClock, to: "/doctor/opd/followups" },
   ],
   "doctor-IPD": [
     { label: "Dashboard", icon: LayoutDashboard, to: "/doctor/ipd/dashboard" },
     { label: "IPD Patients", icon: BedDouble, to: "/doctor/ipd" },
-    // { label: "My Profile",   icon: UserRound, to: "/profile" },
-    { label: "Follow-Ups",   icon: CalendarClock, to: "/doctor/ipd/followups" },
+    { label: "Follow-Ups", icon: CalendarClock, to: "/doctor/ipd/followups" },
   ],
   "pharmacy-Pharmacy": [
-    { label: "Dashboard",     icon: LayoutDashboard, to: "/pharmacy-dashboard"  },
-    { label: "Add Medicine",  icon: Plus,            to: "/pharmacy/add"        },
-    { label: "All Medicines", icon: Pill,            to: "/pharmacy/medicines"  },
-    { label: "Stock History", icon: History,         to: "/pharmacy/stock"      },
-    { label: "Expiry Alerts", icon: Clock,           to: "/pharmacy/expiry"     },
+    { label: "Dashboard", icon: LayoutDashboard, to: "/pharmacy-dashboard" },
+    { label: "Add Medicine", icon: Plus, to: "/pharmacy/add" },
+    { label: "All Medicines", icon: Pill, to: "/pharmacy/medicines" },
+    { label: "Stock History", icon: History, to: "/pharmacy/stock" },
+    { label: "Expiry Alerts", icon: Clock, to: "/pharmacy/expiry" },
   ],
   "admin-ADMIN": [
-    { label: "Dashboard",          icon: LayoutDashboard, to: "/admin/dashboard"  },
-    { label: "Staff Accounts",     icon: ShieldCheck,     to: "/admin/staff"      },
-    { label: "Employee Directory", icon: Building2,       to: "/admin/employees"  },
-    { label: "Patient Analytics",  icon: Users,           to: "/admin/patients"   },
-    { label: "Pharmacy Analytics", icon: Pill,            to: "/admin/pharmacy"   },
-    { label: "Working Days",         icon: CalendarClock,       to: "/admin/workingdays" },
-    { label: "Biometric Management",  icon: Fingerprint,   to: "/admin/biometric" },
-    { label: "Salary Management",  icon: Wallet ,   to: "/admin/salary-management" },
-    { label: "Shift Assignment",  icon: UserPlus ,   to: "/admin/shift-assign" },
-    { label: "My Profile",         icon: UserRound,       to: "/admin/profile" },
+    { label: "Dashboard", icon: LayoutDashboard, to: "/admin/dashboard" },
+    { label: "Staff Accounts", icon: ShieldCheck, to: "/admin/staff" },
+    { label: "Employee Directory", icon: Building2, to: "/admin/employees" },
+    { label: "Patient Analytics", icon: Users, to: "/admin/patients" },
+    { label: "Pharmacy Analytics", icon: Pill, to: "/admin/pharmacy" },
+    { label: "Working Days", icon: CalendarClock, to: "/admin/workingdays" },
+    { label: "Biometric Mgmt", icon: Fingerprint, to: "/admin/biometric" },
+    { label: "Salary Mgmt", icon: Wallet, to: "/admin/salary-management" },
+    { label: "Shift Assignment", icon: UserPlus, to: "/admin/shift-assign" },
+    { label: "My Profile", icon: UserRound, to: "/admin/profile" },
   ],
   "manager-MANAGER": [
-    { label: "Dashboard",          icon: LayoutDashboard, to: "/manager/dashboard"    },
-    // { label: "Employee Directory", icon: Building2,       to: "/manager/employees"    },
-    { label: "Shift Assignment",   icon: UserPlus,        to: "/manager/shift-assign" },
+    { label: "Dashboard", icon: LayoutDashboard, to: "/manager/dashboard" },
+    { label: "Shift Assignment", icon: UserPlus, to: "/manager/shift-assign" },
   ],
 };
-  
-// Where each OPD/IPD tab should land when a receptionist/doctor switches
-// modules from the Sidebar (rather than logging in again).
+
 const HOSPITAL_DASHBOARD_ROUTES = {
   "receptionist-OPD": "/opd-dashboard",
   "receptionist-IPD": "/ipd-dashboard",
@@ -95,58 +88,50 @@ export default function Sidebar({ collapsed, setCollapsed }) {
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const isPharmacy    = user?.role === "pharmacy";
-  const isManager     = user?.role === "manager";
-  const isAdmin       = user?.role === "admin";
-  // Receptionists and doctors can now be assigned OPD, IPD, or both from a
-  // single login — the Sidebar shows tabs for whichever they have.
-  const isHospitalRole = user?.role === "receptionist" || user?.role === "doctor";
-  const hospitalModules = (user?.modules || []).filter((m) => m === "OPD" || m === "IPD");
+  const isPharmacy = user?.role === "pharmacy";
+  const isManager = user?.role === "manager";
+  const isAdmin = user?.role === "admin";
+  const isHospitalRole =
+    user?.role === "receptionist" || user?.role === "doctor";
+  const hospitalModules = (user?.modules || []).filter(
+    (m) => m === "OPD" || m === "IPD",
+  );
 
   const [activeModule, setActiveModule] = useState(() => {
     if (!user || !isHospitalRole) return null;
-    const stored = user.id ? localStorage.getItem(`activeModule:${user.id}`) : null;
+    const stored = user.id
+      ? localStorage.getItem(`activeModule:${user.id}`)
+      : null;
     if (stored && hospitalModules.includes(stored)) return stored;
     return hospitalModules.includes("OPD") ? "OPD" : hospitalModules[0] || null;
   });
 
-  // Keep activeModule in sync if the user object loads/changes after mount
-  // (e.g. on first app load before context has hydrated).
   useEffect(() => {
     if (!user || !isHospitalRole) return;
     if (activeModule && hospitalModules.includes(activeModule)) return;
-    const stored = user.id ? localStorage.getItem(`activeModule:${user.id}`) : null;
-    const next = stored && hospitalModules.includes(stored)
-      ? stored
-      : hospitalModules.includes("OPD") ? "OPD" : hospitalModules[0] || null;
+    const stored = user.id
+      ? localStorage.getItem(`activeModule:${user.id}`)
+      : null;
+    const next =
+      stored && hospitalModules.includes(stored)
+        ? stored
+        : hospitalModules.includes("OPD")
+          ? "OPD"
+          : hospitalModules[0] || null;
     setActiveModule(next);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, user?.modules?.join(",")]);
-
-  const isOPD = isHospitalRole ? activeModule === "OPD" : false;
 
   const contextForKey = isHospitalRole
     ? activeModule
     : isPharmacy
-    ? "Pharmacy"
-    : isAdmin
-    ? "ADMIN"
-    : isManager
-    ? "MANAGER"
-    : "";
-
-  const key   = user ? `${user.role}-${contextForKey}` : "";
+      ? "Pharmacy"
+      : isAdmin
+        ? "ADMIN"
+        : isManager
+          ? "MANAGER"
+          : "";
+  const key = user ? `${user.role}-${contextForKey}` : "";
   const links = menuConfig[key] || [];
-
-  const moduleLabel = isPharmacy
-    ? "Pharmacy"
-    : isManager
-    ? "Manager"
-    : isAdmin
-    ? "Admin"
-    : isHospitalRole
-    ? activeModule
-    : "";
 
   const handleModuleSwitch = (mod) => {
     if (!user || mod === activeModule) return;
@@ -167,202 +152,167 @@ export default function Sidebar({ collapsed, setCollapsed }) {
   }, [key]);
 
   const NavContent = ({ mini }) => (
-    <>
-      {/* Logo */}
-      <div className={`flex items-center gap-3 px-4 py-5 border-b border-slate-200 dark:border-slate-800 flex-shrink-0 ${mini ? "flex-col gap-2 px-0" : ""}`}>
-        <div className="relative flex-shrink-0">
-          <div className="w-9 h-9 rounded-xl overflow-hidden shadow-lg shadow-emerald-500/25">
+    <div className="flex flex-col h-full justify-between py-6">
+      <div>
+        {/* Brand Logo Header matching Screenshot */}
+        <div
+          className={`flex items-center gap-3 px-5 pb-6 flex-shrink-0 ${mini ? "flex-col gap-2 px-2" : ""}`}
+        >
+          <div className="w-10 h-10 rounded-2xl bg-slate-200/60 dark:bg-slate-800 border border-slate-300/50 dark:border-slate-700/60 flex items-center justify-center flex-shrink-0">
             <img
               src="/healthcare.jpg"
-              alt="MediCore logo"
-              className="w-full h-full object-cover"
+              alt="Logo"
+              className="w-full h-full object-contain rounded-xl"
+              onError={(e) => {
+                // Fallback icon if logo image is not found
+                e.target.style.display = "none";
+                e.target.parentNode.classList.add(
+                  "bg-[#0f4a29]",
+                  "text-[#52b788]",
+                );
+              }}
             />
           </div>
-          <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-white dark:border-slate-900" />
+          {!mini && (
+            <div className="min-w-0 flex-1">
+              <h2 className="text-[#191d23] dark:text-white font-black text-xs tracking-wider uppercase leading-tight truncate">
+                VIRUPAKSHIPURAM
+              </h2>
+              <p className="text-[#0f4a29] dark:text-[#52b788] font-bold text-[11px] tracking-normal leading-tight truncate mt-0.5">
+                Paralysis Centre
+              </p>
+            </div>
+          )}
         </div>
-        {!mini && (
-          <div className="min-w-0">
-            <p className="text-slate-900 dark:text-white font-bold text-sm leading-none tracking-tight">VPC</p>
-            <p className={`text-[11px] font-semibold mt-0.5 tracking-widest uppercase ${
-              isPharmacy ? "text-emerald-600 dark:text-emerald-400" : "text-teal-600 dark:text-teal-400"
-            }`}>
-              {isPharmacy ? "Pharmacy" : "HMS"}
-            </p>
+
+        {/* Dynamic Context Switcher Tab */}
+        {isHospitalRole && hospitalModules.length > 1 && (
+          <div className={`flex-shrink-0 mb-6 ${mini ? "px-2" : "px-5"}`}>
+            <div
+              className={`flex items-center gap-1 p-1 rounded-full bg-[#f3f4f6] dark:bg-slate-800 border border-slate-200/60 dark:border-slate-700/50 ${mini ? "flex-col rounded-2xl" : ""}`}
+            >
+              {["OPD", "IPD"]
+                .filter((m) => hospitalModules.includes(m))
+                .map((m) => {
+                  const Icon = m === "OPD" ? Stethoscope : BedDouble;
+                  const isActiveTab = activeModule === m;
+                  return (
+                    <button
+                      key={m}
+                      onClick={() => handleModuleSwitch(m)}
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-full text-[11px] font-bold transition-all ${
+                        mini ? "w-full px-0 py-2" : ""
+                      } ${
+                        isActiveTab
+                          ? "bg-white dark:bg-slate-900 text-[#0f4a29] dark:text-[#52b788] shadow-xs"
+                          : "text-slate-500 hover:text-slate-800"
+                      }`}
+                    >
+                      <Icon
+                        className="w-3.5 h-3.5"
+                        strokeWidth={isActiveTab ? 2.5 : 2}
+                      />
+                      {!mini && <span>{m}</span>}
+                    </button>
+                  );
+                })}
+            </div>
           </div>
         )}
-        {/* Collapse/expand toggle — kept inline (not absolutely positioned outside
-            the sidebar) so it's never clipped by an ancestor's overflow-x-hidden */}
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          className={`p-1.5 rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-all hidden lg:flex ${mini ? "" : "ml-auto"}`}
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-        >
-          {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-        </button>
+
+        {/* Navigation Categories */}
+        <nav className={`space-y-6 ${mini ? "px-2" : "px-4"}`}>
+          <div>
+            {!mini && (
+              <p className="text-[10px] font-bold uppercase tracking-widest text-[#9ca3af] px-4 mb-2">
+                Menu
+              </p>
+            )}
+            <ul className="space-y-0.5 list-none m-0 p-0">
+              {links.map((link) => {
+                const Icon = link.icon;
+                return (
+                  <li key={link.to}>
+                    <NavLink
+                      to={link.to}
+                      end
+                      onClick={() => setMobileOpen(false)}
+                      className={({ isActive }) =>
+                        `flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition-all group relative ${
+                          mini ? "justify-center px-0" : ""
+                        } ${
+                          isActive
+                            ? "text-[#0f4a29] dark:text-white bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 shadow-xs font-extrabold"
+                            : "text-[#6b7280] dark:text-slate-400 hover:text-[#155430] dark:hover:text-white"
+                        }`
+                      }
+                    >
+                      {({ isActive }) => (
+                        <>
+                          {/* Active State Indicator Strip on left edge */}
+                          {isActive && !mini && (
+                            <span className="absolute left-0 top-1/3 bottom-1/3 w-1 rounded-r-full bg-[#0f4a29]" />
+                          )}
+                          <Icon
+                            className={`flex-shrink-0 ${mini ? "w-5 h-5" : "w-4 h-4"} ${
+                              isActive
+                                ? "text-[#0f4a29] dark:text-[#52b788]"
+                                : "text-[#9ca3af] group-hover:text-[#4b5563]"
+                            }`}
+                            strokeWidth={isActive ? 2.5 : 2}
+                          />
+                          {!mini && (
+                            <span className="truncate">{link.label}</span>
+                          )}
+                        </>
+                      )}
+                    </NavLink>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        </nav>
       </div>
 
-      {/* OPD / IPD module tabs — only for receptionist/doctor accounts
-          assigned to both modules. Selecting a tab swaps the menu below and
-          jumps to that module's dashboard; the choice persists per-user
-          until they switch again. */}
-      {isHospitalRole && hospitalModules.length > 1 && (
-        <div className={`flex-shrink-0 ${mini ? "px-2 pt-3" : "px-4 pt-4"}`}>
-          <div className={`flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/50 ${mini ? "flex-col" : ""}`}>
-            {["OPD", "IPD"].filter((m) => hospitalModules.includes(m)).map((m) => {
-              const Icon = m === "OPD" ? Stethoscope : BedDouble;
-              const isActiveTab = activeModule === m;
-              return (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => handleModuleSwitch(m)}
-                  title={mini ? `${m} module` : undefined}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all ${
-                    mini ? "w-full px-0" : ""
-                  } ${
-                    isActiveTab
-                      ? "bg-white dark:bg-slate-900 text-teal-700 dark:text-teal-400 shadow-sm"
-                      : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-                  }`}
-                >
-                  <Icon className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={isActiveTab ? 2.5 : 2} />
-                  {!mini && <span>{m}</span>}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Module badge */}
-      {!mini && user && (
-        <div className="px-4 pt-4 pb-2 flex-shrink-0">
-          <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-semibold w-full ${
-            isManager
-              ? "bg-orange-50 dark:bg-orange-500/10 border-orange-200 dark:border-orange-500/20 text-orange-700 dark:text-orange-400"
-              : isPharmacy
-              ? "bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20 text-emerald-700 dark:text-emerald-400"
-              : isOPD
-              ? "bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20 text-emerald-700 dark:text-emerald-400"
-              : "bg-violet-50 dark:bg-violet-500/10 border-violet-200 dark:border-violet-500/20 text-violet-700 dark:text-violet-400"
-          }`}>
-            {isManager ? <Briefcase className="w-3.5 h-3.5 flex-shrink-0" />
-              : isPharmacy ? <Pill className="w-3.5 h-3.5 flex-shrink-0" />
-              : isOPD ? <Stethoscope className="w-3.5 h-3.5 flex-shrink-0" />
-              : <BedDouble className="w-3.5 h-3.5 flex-shrink-0" />}
-            <span>{moduleLabel} Module</span>
-            <span className="ml-auto capitalize text-[10px] opacity-70 font-medium">{user.role}</span>
-          </div>
-        </div>
-      )}
-
-      {/* Nav links */}
-      <nav className={`flex-1 overflow-y-auto py-3 ${mini ? "px-2" : "px-3"}`}>
-        {!mini && (
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-600 px-3 mb-2">Navigation</p>
-        )}
-        <ul className="space-y-0.5 list-none m-0 p-0">
-          {links.map((link) => {
-            const Icon = link.icon;
-            return (
-              <li key={link.to}>
-                <NavLink
-                  to={link.to}
-                  end
-                  onClick={() => setMobileOpen(false)}
-                  className={({ isActive }) =>
-                    `flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-150 text-sm font-medium group relative ${
-                      mini ? "justify-center px-2.5" : ""
-                    } ${
-                      isActive
-                        ? isPharmacy
-                          ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200/80 dark:border-emerald-500/20 shadow-sm"
-                          : "bg-teal-50 dark:bg-teal-500/10 text-teal-700 dark:text-teal-400 border border-teal-200/80 dark:border-teal-500/20 shadow-sm"
-                        : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white border border-transparent"
-                    }`
-                  }
-                  title={mini ? link.label : undefined}
-                >
-                  {({ isActive }) => (
-                    <>
-                      <Icon
-                        className={`flex-shrink-0 transition-colors ${mini ? "w-5 h-5" : "w-4 h-4"} ${
-                          isActive
-                            ? isPharmacy ? "text-emerald-600 dark:text-emerald-400" : "text-teal-600 dark:text-teal-400"
-                            : "text-slate-400 dark:text-slate-500 group-hover:text-slate-700 dark:group-hover:text-slate-300"
-                        }`}
-                        strokeWidth={isActive ? 2.5 : 2}
-                      />
-                      {!mini && <span className="truncate">{link.label}</span>}
-                      {mini && (
-                        <span className="pointer-events-none absolute left-full ml-3 z-50 px-2.5 py-1.5 rounded-lg bg-slate-900 dark:bg-slate-700 text-white text-xs font-medium whitespace-nowrap opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all duration-150 shadow-lg">
-                          {link.label}
-                        </span>
-                      )}
-                    </>
-                  )}
-                </NavLink>
-              </li>
-            );
-          })}
-        </ul>
-      </nav>
-
-      {/* User + Logout */}
-      <div className="border-t border-slate-200 dark:border-slate-800 flex-shrink-0 p-3 space-y-1">
-        {!mini && user && (
-          <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/50 mb-2">
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 shadow-sm ${
-              isPharmacy ? "bg-gradient-to-br from-emerald-500 to-teal-400" : "bg-gradient-to-br from-teal-500 to-cyan-400"
-            }`}>
-              {user.username[0].toUpperCase()}
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-slate-800 dark:text-white text-xs font-semibold capitalize truncate leading-tight">{user.username}</p>
-              <p className="text-slate-400 dark:text-slate-500 text-[11px] capitalize leading-tight mt-0.5">{user.role}</p>
-            </div>
-            <Activity className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
-          </div>
-        )}
+      {/* Donezo System Actions footer */}
+      <div className="px-4 space-y-2">
         <button
           onClick={handleLogout}
-          className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-red-50 dark:hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400 transition-all text-sm font-medium border border-transparent hover:border-red-100 dark:hover:border-red-500/20 group relative ${mini ? "justify-center px-2.5" : ""}`}
-          title={mini ? "Logout" : undefined}
+          className={`flex items-center gap-3 w-full px-4 py-3 rounded-full text-[#6b7280] hover:text-red-600 transition-all text-xs font-bold group relative ${mini ? "justify-center px-0" : ""}`}
         >
-          <LogOut className={`flex-shrink-0 transition-colors group-hover:text-red-500 ${mini ? "w-5 h-5" : "w-4 h-4"}`} strokeWidth={2} />
+          <LogOut
+            className={`flex-shrink-0 group-hover:text-red-500 ${mini ? "w-5 h-5" : "w-4 h-4"}`}
+            strokeWidth={2.5}
+          />
           {!mini && <span>Logout</span>}
-          {mini && (
-            <span className="pointer-events-none absolute left-full ml-3 z-50 px-2.5 py-1.5 rounded-lg bg-slate-900 dark:bg-slate-700 text-white text-xs font-medium whitespace-nowrap opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all duration-150 shadow-lg">
-              Logout
-            </span>
-          )}
         </button>
       </div>
-    </>
+    </div>
   );
 
   return (
     <>
       <button
         onClick={() => setMobileOpen(true)}
-        className="lg:hidden fixed top-4 left-4 z-40 w-9 h-9 flex items-center justify-center rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition-all"
-        aria-label="Open menu"
+        className="lg:hidden fixed top-5 left-4 z-40 w-9 h-9 flex items-center justify-center rounded-full bg-white border border-slate-200 text-slate-700"
       >
         <Menu className="w-4 h-4" />
       </button>
 
       {mobileOpen && (
-        <div className="lg:hidden fixed inset-0 bg-black/40 backdrop-blur-sm z-40 transition-opacity" onClick={() => setMobileOpen(false)} aria-hidden="true" />
+        <div
+          className="lg:hidden fixed inset-0 bg-black/20 backdrop-blur-xs z-40"
+          onClick={() => setMobileOpen(false)}
+        />
       )}
 
       <aside
-        className={`lg:hidden fixed inset-y-0 left-0 z-50 w-72 flex flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-2xl transition-transform duration-300 ease-out ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}
-        aria-label="Mobile navigation"
+        className={`lg:hidden fixed inset-y-0 left-0 z-50 w-[260px] flex flex-col bg-[#fcfdfe] dark:bg-slate-900 border-r border-slate-200/60 dark:border-slate-800 shadow-xl transition-transform duration-300 ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}
       >
         <button
           onClick={() => setMobileOpen(false)}
-          className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-all"
-          aria-label="Close menu"
+          className="absolute top-5 right-4 w-7 h-7 flex items-center justify-center rounded-full text-slate-400 hover:bg-slate-100"
         >
           <X className="w-4 h-4" />
         </button>
@@ -370,8 +320,7 @@ export default function Sidebar({ collapsed, setCollapsed }) {
       </aside>
 
       <aside
-        className={`hidden lg:flex flex-col fixed inset-y-0 left-0 z-30 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 transition-all duration-300 ease-in-out shadow-sm ${collapsed ? "w-[68px]" : "w-64"}`}
-        aria-label="Desktop navigation"
+        className={`hidden lg:flex flex-col fixed inset-y-0 left-0 z-30 bg-[#fcfdfe] dark:bg-slate-950 border-r border-slate-200/60 dark:border-slate-800 transition-all duration-300 ${collapsed ? "w-[88px]" : "w-[260px]"}`}
       >
         <NavContent mini={collapsed} />
       </aside>

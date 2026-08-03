@@ -1,6 +1,7 @@
 // client/src/pages/ipd/IPDPatientDetails.jsx
 import { useState, useRef } from "react";
 import { SectionCard, StatusBadge, PageHeader } from "../../components/UI";
+import InvoiceModal from "../../components/InvoiceModal";
 import { uploadDocument, deleteDocument } from "./api/ipd.api";
 import {
   ArrowLeft,
@@ -12,6 +13,7 @@ import {
   Paperclip,
   Upload,
   Trash2,
+  Receipt,
 } from "lucide-react";
 
 const docTypes = ["Prescription", "Lab Report", "Scan Report", "Hospital Bill"];
@@ -26,6 +28,7 @@ export default function IPDPatientDetails({
   const [docType, setDocType] = useState("Prescription");
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
+  const [invoicing, setInvoicing] = useState(false);
 
   const handleFile = async (e) => {
     const file = e.target.files[0];
@@ -66,14 +69,32 @@ export default function IPDPatientDetails({
         title={p.name}
         subtitle={`IPD No: #${p.serialNumber || "—"}`}
         action={
-          <button
-            onClick={onBack}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 text-xs font-extrabold"
-          >
-            <ArrowLeft className="w-4 h-4" /> Back to List
-          </button>
+          <div className="flex items-center gap-2">
+            {!readOnly && (
+              <button
+                onClick={() => setInvoicing(true)}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#0f4a29] hover:bg-[#165a34] text-white text-xs font-extrabold shadow-xs"
+              >
+                <Receipt className="w-4 h-4" /> Generate Invoice
+              </button>
+            )}
+            <button
+              onClick={onBack}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 text-xs font-extrabold"
+            >
+              <ArrowLeft className="w-4 h-4" /> Back to List
+            </button>
+          </div>
         }
       />
+
+      {invoicing && (
+        <InvoiceModal
+          type="IPD"
+          patient={p}
+          onClose={() => setInvoicing(false)}
+        />
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 max-w-6xl">
         <SectionCard title="Personal Information" icon={User}>

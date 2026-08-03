@@ -14,7 +14,8 @@ import {
   StatusBadge,
 } from "../../components/UI";
 import OPDPatientDetails from "./OPDPatientDetails";
-import { UserPlus, SlidersHorizontal, X, Search } from "lucide-react";
+import InvoiceModal from "../../components/InvoiceModal";
+import { UserPlus, SlidersHorizontal, X, Search, Receipt } from "lucide-react";
 import { api } from "../../lib/api";
 
 const PER_PAGE = 7;
@@ -35,6 +36,7 @@ export default function OPDPatients({ isDoctor = false }) {
   const [page, setPage] = useState(1);
   const [deleteId, setDeleteId] = useState(null);
   const [viewing, setViewing] = useState(null);
+  const [invoicing, setInvoicing] = useState(null);
   const navigate = useNavigate();
   const basePath = isDoctor ? "/doctor/opd" : "/opd";
 
@@ -221,6 +223,13 @@ export default function OPDPatients({ isDoctor = false }) {
                       type="delete"
                       onClick={() => setDeleteId(p.id)}
                     />
+                    <button
+                      onClick={() => setInvoicing(p)}
+                      title="Generate Invoice"
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-[#0f4a29] hover:bg-[#0f4a29]/10 transition-colors"
+                    >
+                      <Receipt className="w-4 h-4" />
+                    </button>
                   </div>
                 </Td>
               </tr>
@@ -236,6 +245,14 @@ export default function OPDPatients({ isDoctor = false }) {
           name={patients.find((p) => p.id === deleteId)?.name}
           onConfirm={() => handleDelete(deleteId)}
           onCancel={() => !deleting && setDeleteId(null)}
+        />
+      )}
+
+      {invoicing && (
+        <InvoiceModal
+          type="OPD"
+          patient={invoicing}
+          onClose={() => setInvoicing(null)}
         />
       )}
     </div>

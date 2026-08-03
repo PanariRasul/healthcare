@@ -14,8 +14,10 @@ import {
   Plus,
   Trash2,
   AlertTriangle,
+  Receipt,
 } from "lucide-react";
 import { SectionCard, StatusBadge, PageHeader } from "../../components/UI";
+import InvoiceModal from "../../components/InvoiceModal";
 import { api } from "../../lib/api";
 
 const followUpStatusColors = {
@@ -53,6 +55,7 @@ export default function OPDPatientDetails({
   const [rxSaving, setRxSaving] = useState(false);
   const [rxError, setRxError] = useState("");
   const [deletingRxId, setDeletingRxId] = useState(null);
+  const [invoicing, setInvoicing] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -187,14 +190,30 @@ export default function OPDPatientDetails({
         title={p.name}
         subtitle={`OPD Token: #${p.serialNumber || "—"}`}
         action={
-          <button
-            onClick={onBack}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 text-xs font-extrabold"
-          >
-            <ArrowLeft className="w-4 h-4" /> Back to List
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setInvoicing(true)}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#0f4a29] hover:bg-[#165a34] text-white text-xs font-extrabold shadow-xs"
+            >
+              <Receipt className="w-4 h-4" /> Generate Invoice
+            </button>
+            <button
+              onClick={onBack}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 text-xs font-extrabold"
+            >
+              <ArrowLeft className="w-4 h-4" /> Back to List
+            </button>
+          </div>
         }
       />
+
+      {invoicing && (
+        <InvoiceModal
+          type="OPD"
+          patient={p}
+          onClose={() => setInvoicing(false)}
+        />
+      )}
 
       {error && (
         <div className="bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/30 rounded-2xl px-4 py-3 text-rose-600 dark:text-rose-400 text-xs font-bold">

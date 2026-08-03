@@ -1,0 +1,672 @@
+// client/src/components/InvoiceModal.jsx
+//
+// Shared "Generate Invoice" modal used by both OPD and IPD screens.
+// Usage:
+//   <InvoiceModal type="OPD" patient={row} onClose={() => setInvoicing(null)} />
+//   <InvoiceModal type="IPD" patient={row} onClose={() => setInvoicing(null)} />
+//
+// `patient` only needs to contain `id` — the modal fetches full details
+// (daily charges / medicines / prescriptions) itself, and loads/saves
+// invoice history via /api/invoices (see server/src/Invoice + client/src/api/invoice.api.js).
+
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { X, Plus, Trash2, Printer, Loader2, Save, History } from "lucide-react";
+import { api } from "../lib/api";
+import { fetchPatient as fetchIpdPatient } from "../pages/ipd/api/ipd.api";
+import {
+    fetchNextInvoiceNumber,
+    fetchPatientInvoices,
+    createInvoice,
+} from "../api/invoice.api";
+
+// ---------------------------------------------------------------------------
+// Clinic letterhead — edit these to match your actual clinic details/logo.
+// logoUrl points at client/public/healthcare.jpg, which Vite serves at "/healthcare.jpg".
+// ---------------------------------------------------------------------------
+const CLINIC = {
+    name: "Virupakshipuram Paralysis Centre",
+    tagline: "Physiotherapy & Neuro Rehabilitation",
+    logoUrl: "/hsptl_logo.png",
+    footerName: "Virupakshipuram Paralysis Centre",
+    footerAddress:
+        "No.6, G R Plaza, 24th Main Rd, opp. Empire Restaurant, 5th Phase, Ayodya Nagar, J P Nagar Phase 5, J. P. Nagar, Bengaluru, Karnataka 560078",
+};
+
+const PAYMENT_METHODS = ["Cash", "UPI", "Card", "Bank Transfer", "Cheque", "Other"];
+
+const fmtINR = (n) =>
+    `₹${(Number(n) || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+
+const fmtDate = (d) =>
+    d
+        ? new Date(d).toLocaleDateString("en-IN", {
+            day: "2-digit",
+            month: "short",
+            year: "numeric",
+        })
+        : "—";
+
+const fmtDateTime = (d) =>
+    d
+        ? new Date(d).toLocaleString("en-IN", {
+            day: "2-digit",
+            month: "short",
+            year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+        })
+        : "—";
+
+let rowSeq = 0;
+const nextRowId = () => `row-${Date.now()}-${rowSeq++}`;
+
+// Best-guess payment method from existing patient payment fields, just used
+// as a sensible default for the dropdown — the user can always change it.
+function guessPaymentMethod(data, isIPD) {
+    if (isIPD) {
+        const amounts = { Cash: data.cash, UPI: data.upi, Card: data.card };
+        const top = Object.entries(amounts).sort((a, b) => (b[1] || 0) - (a[1] || 0))[0];
+        return top && top[1] > 0 ? top[0] : "Cash";
+    }
+    if ((data.upi || 0) > (data.cash || 0)) return "UPI";
+    return "Cash";
+}
+
+export default function InvoiceModal({ type, patient, onClose }) {
+    const isIPD = type === "IPD";
+
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState("");
+    const [full, setFull] = useState(null); // full patient record from API
+
+    const [lineItems, setLineItems] = useState([]);
+    const [discount, setDiscount] = useState(0);
+    const [gstPercent, setGstPercent] = useState(0);
+    const [paid, setPaid] = useState(0);
+    const [paymentMethod, setPaymentMethod] = useState("Cash");
+    const [notes, setNotes] = useState("");
+
+    const [invoiceNumber, setInvoiceNumber] = useState("");
+    const [invoiceDate, setInvoiceDate] = useState(new Date());
+    const [savedInvoiceId, setSavedInvoiceId] = useState(null);
+    const [saving, setSaving] = useState(false);
+    const [saveError, setSaveError] = useState("");
+
+    const [history, setHistory] = useState([]);
+    const [historyLoading, setHistoryLoading] = useState(true);
+    const [showHistory, setShowHistory] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            setLoading(true);
+            setError("");
+            try {
+                let data;
+                if (isIPD) {
+                    data = await fetchIpdPatient(patient.id);
+                } else {
+                    const res = await api.get(`/opd/patients/${patient.id}`);
+                    data = res.patient;
+                }
+                if (cancelled) return;
+                setFull(data);
+                buildDefaults(data);
+
+                // Preview the next invoice number (not reserved until actually saved)
+                fetchNextInvoiceNumber(type)
+                    .then((r) => !cancelled && setInvoiceNumber(r.invoiceNumber))
+                    .catch(() => { });
+            } catch (err) {
+                if (!cancelled) setError(err.message || "Failed to load patient details");
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
+        })();
+        loadHistory();
+        return () => {
+            cancelled = true;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [patient.id, type]);
+
+    function loadHistory() {
+        setHistoryLoading(true);
+        fetchPatientInvoices(type, patient.id)
+            .then((invs) => setHistory(invs))
+            .catch(() => setHistory([]))
+            .finally(() => setHistoryLoading(false));
+    }
+
+    function buildDefaults(data) {
+        const items = [];
+
+        if (isIPD) {
+            (data.dailyCharges || []).forEach((c) => {
+                items.push({
+                    id: nextRowId(),
+                    description: `Stay / Room Charges${c.date ? ` — ${fmtDate(c.date)}` : ""}`,
+                    qty: c.days || 1,
+                    rate: c.rate || 0,
+                });
+            });
+            (data.medicines || []).forEach((m) => {
+                items.push({
+                    id: nextRowId(),
+                    description: `${m.name}${m.dosage ? ` (${m.dosage})` : ""}`,
+                    qty: m.quantity || 1,
+                    rate: 0, // price not tracked on IPD medicine records — fill in manually
+                });
+            });
+            setPaid(data.totalPaid || 0);
+            setPaymentMethod(guessPaymentMethod(data, true));
+            setNotes(data.followUpDate ? `Next visit: ${fmtDate(data.followUpDate)}` : "");
+        } else {
+            if (data.fee) {
+                items.push({
+                    id: nextRowId(),
+                    description: "OPD Consultation Fee",
+                    qty: 1,
+                    rate: data.fee,
+                });
+            }
+            (data.prescribedMedicines || []).forEach((pm) => {
+                items.push({
+                    id: nextRowId(),
+                    description: `${pm.drugName}${pm.dosageInstructions ? ` (${pm.dosageInstructions})` : ""}`,
+                    qty: pm.quantity || 1,
+                    rate: 0, // medicine price not exposed to OPD prescriptions — fill in manually
+                });
+            });
+            setPaid(data.total || 0);
+            setPaymentMethod(guessPaymentMethod(data, false));
+            setNotes(data.followUpDate ? `Next visit: ${fmtDate(data.followUpDate)}` : "");
+        }
+
+        if (items.length === 0) {
+            items.push({ id: nextRowId(), description: "", qty: 1, rate: 0 });
+        }
+        setLineItems(items);
+        setDiscount(0);
+        setGstPercent(0);
+        setSavedInvoiceId(null);
+        setInvoiceDate(new Date());
+    }
+
+    const updateRow = (id, field, value) => {
+        setLineItems((rows) => rows.map((r) => (r.id === id ? { ...r, [field]: value } : r)));
+    };
+
+    const addRow = () =>
+        setLineItems((rows) => [...rows, { id: nextRowId(), description: "", qty: 1, rate: 0 }]);
+
+    const removeRow = (id) => setLineItems((rows) => rows.filter((r) => r.id !== id));
+
+    const subtotal = lineItems.reduce(
+        (s, r) => s + (Number(r.qty) || 0) * (Number(r.rate) || 0),
+        0,
+    );
+    const discountVal = Number(discount) || 0;
+    const gstVal = Math.round((subtotal - discountVal) * (Number(gstPercent) || 0)) / 100;
+    const grandTotal = Math.max(0, subtotal - discountVal + gstVal);
+    const paidVal = Number(paid) || 0;
+    const balance = Math.max(0, Math.round((grandTotal - paidVal) * 100) / 100);
+
+    // Load a previously saved invoice back into the editable form, for reprinting.
+    function viewPastInvoice(inv) {
+        const items = Array.isArray(inv.lineItems) ? inv.lineItems : [];
+        setLineItems(
+            items.length
+                ? items.map((it) => ({ id: nextRowId(), ...it }))
+                : [{ id: nextRowId(), description: "", qty: 1, rate: 0 }],
+        );
+        setDiscount(inv.discount || 0);
+        setGstPercent(inv.gstPercent || 0);
+        setPaid(inv.paid || 0);
+        setPaymentMethod(inv.paymentMethod || "Cash");
+        setNotes(inv.notes || "");
+        setInvoiceNumber(inv.invoiceNumber);
+        setInvoiceDate(inv.createdAt);
+        setSavedInvoiceId(inv.id);
+        setShowHistory(false);
+    }
+
+    function startNewInvoice() {
+        if (full) buildDefaults(full);
+        fetchNextInvoiceNumber(type)
+            .then((r) => setInvoiceNumber(r.invoiceNumber))
+            .catch(() => { });
+        setShowHistory(false);
+    }
+
+    async function handleSave() {
+        setSaving(true);
+        setSaveError("");
+        try {
+            const payload = {
+                patientType: type,
+                patientId: full.id,
+                patientName: full.name,
+                lineItems: lineItems.map(({ description, qty, rate }) => ({
+                    description,
+                    qty: Number(qty) || 0,
+                    rate: Number(rate) || 0,
+                    amount: (Number(qty) || 0) * (Number(rate) || 0),
+                })),
+                subtotal,
+                discount: discountVal,
+                gstPercent: Number(gstPercent) || 0,
+                gstAmount: gstVal,
+                grandTotal,
+                paid: paidVal,
+                balance,
+                paymentMethod,
+                notes,
+            };
+            const saved = await createInvoice(payload);
+            setSavedInvoiceId(saved.id);
+            setInvoiceNumber(saved.invoiceNumber);
+            setInvoiceDate(saved.createdAt);
+            loadHistory();
+        } catch (err) {
+            setSaveError(err.message || "Failed to save invoice");
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    const handlePrint = () => window.print();
+
+    return createPortal(
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs invoice-modal-backdrop">
+            <style>{`
+        @media print {
+          body * { visibility: hidden; }
+          .invoice-print-area, .invoice-print-area * { visibility: visible; }
+          .invoice-print-area {
+            position: fixed; inset: 0; width: 100%; margin: 0; padding: 24px;
+            box-shadow: none !important; border: none !important; max-height: none !important;
+            overflow: visible !important;
+          }
+          .no-print { display: none !important; }
+          .invoice-print-area input, .invoice-print-area select, .invoice-print-area textarea {
+            border: none !important; background: transparent !important;
+            padding: 0 !important; box-shadow: none !important; -webkit-appearance: none;
+            appearance: none;
+          }
+        }
+      `}</style>
+
+            <div
+                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[28px] w-full max-w-3xl max-h-[92vh] overflow-y-auto shadow-2xl invoice-print-area"
+                onClick={(e) => e.stopPropagation()}
+            >
+                <div className="flex items-center justify-between p-5 border-b border-slate-100 dark:border-slate-800 sticky top-0 bg-white dark:bg-slate-900 z-10 no-print">
+                    <div>
+                        <h3 className="font-extrabold text-slate-900 dark:text-white text-base">
+                            Generate Invoice
+                        </h3>
+                        <p className="text-xs text-slate-400 font-medium">
+                            {type} Patient — review & edit before printing
+                        </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => setShowHistory((v) => !v)}
+                            title="Past invoices for this patient"
+                            className="flex items-center gap-1.5 px-3 py-2 rounded-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-extrabold"
+                        >
+                            <History className="w-4 h-4" />
+                            History{history.length > 0 ? ` (${history.length})` : ""}
+                        </button>
+                        <button
+                            onClick={onClose}
+                            className="text-slate-400 hover:text-slate-600 transition-colors"
+                        >
+                            <X className="w-5 h-5" />
+                        </button>
+                    </div>
+                </div>
+
+                {loading ? (
+                    <div className="flex items-center justify-center py-16 text-xs font-bold text-slate-400">
+                        <Loader2 className="w-5 h-5 animate-spin text-[#0f4a29] mr-2" />
+                        Loading patient details...
+                    </div>
+                ) : error ? (
+                    <div className="p-6">
+                        <div className="bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/30 rounded-2xl px-4 py-3 text-rose-600 dark:text-rose-400 text-xs font-bold">
+                            {error}
+                        </div>
+                    </div>
+                ) : (
+                    <>
+                        {/* Past invoices for this patient */}
+                        {showHistory && (
+                            <div className="no-print mx-6 mt-4 bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 rounded-2xl p-4">
+                                <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-2">
+                                    Previously Generated Invoices
+                                </h4>
+                                {historyLoading ? (
+                                    <p className="text-xs text-slate-400 font-medium">Loading...</p>
+                                ) : history.length === 0 ? (
+                                    <p className="text-xs text-slate-400 font-medium">
+                                        No invoices generated yet for this patient.
+                                    </p>
+                                ) : (
+                                    <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                                        {history.map((inv) => (
+                                            <div
+                                                key={inv.id}
+                                                className="flex items-center justify-between bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-xl px-3 py-2 text-xs"
+                                            >
+                                                <div>
+                                                    <div className="font-extrabold text-slate-900 dark:text-white">
+                                                        {inv.invoiceNumber}
+                                                    </div>
+                                                    <div className="text-slate-400 font-medium">
+                                                        {fmtDateTime(inv.createdAt)} · {fmtINR(inv.grandTotal)}
+                                                        {inv.balance > 0 && (
+                                                            <span className="text-rose-500 font-bold">
+                                                                {" "}
+                                                                · Balance {fmtINR(inv.balance)}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    onClick={() => viewPastInvoice(inv)}
+                                                    className="px-3 py-1 rounded-full bg-[#0f4a29] text-white font-extrabold"
+                                                >
+                                                    View / Print
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        <div className="p-6 sm:p-8 space-y-6 text-slate-900 dark:text-white">
+                            {/* Letterhead */}
+                            <div className="text-center border-b-2 border-slate-800 dark:border-slate-200 pb-4">
+                                {CLINIC.logoUrl && (
+                                    <img
+                                        src={CLINIC.logoUrl}
+                                        alt="Clinic logo"
+                                        className="h-16 mx-auto mb-2 object-contain"
+                                    />
+                                )}
+                                <h1 className="text-xl font-extrabold tracking-wide">{CLINIC.name}</h1>
+                                {CLINIC.tagline && (
+                                    <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                                        {CLINIC.tagline}
+                                    </p>
+                                )}
+                            </div>
+
+                            {savedInvoiceId && (
+                                <div className="no-print bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/30 rounded-2xl px-4 py-2 text-emerald-700 dark:text-emerald-400 text-xs font-bold">
+                                    This invoice is saved. Editing will not update the saved record — use
+                                    "Save as New Invoice" to persist changes.
+                                </div>
+                            )}
+                            {saveError && (
+                                <div className="no-print bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/30 rounded-2xl px-4 py-2 text-rose-600 dark:text-rose-400 text-xs font-bold">
+                                    {saveError}
+                                </div>
+                            )}
+
+                            {/* Invoice meta */}
+                            <div className="flex flex-wrap justify-between gap-3 text-xs font-medium">
+                                <div>
+                                    <div className="text-slate-400 text-[10px] uppercase font-bold">
+                                        Invoice No.
+                                    </div>
+                                    <div className="font-extrabold">{invoiceNumber || "—"}</div>
+                                </div>
+                                <div>
+                                    <div className="text-slate-400 text-[10px] uppercase font-bold">Date</div>
+                                    <div className="font-extrabold">{fmtDate(invoiceDate)}</div>
+                                </div>
+                                <div>
+                                    <div className="text-slate-400 text-[10px] uppercase font-bold">
+                                        {type} No.
+                                    </div>
+                                    <div className="font-extrabold">
+                                        #{full?.serialNumber || full?.tokenNumber || "—"}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Patient details */}
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-medium border-y border-slate-100 dark:border-slate-800 py-4">
+                                <div>
+                                    <div className="text-slate-400 text-[10px] uppercase font-bold">Patient</div>
+                                    <div className="font-extrabold">{full?.name}</div>
+                                </div>
+                                <div>
+                                    <div className="text-slate-400 text-[10px] uppercase font-bold">Age</div>
+                                    <div className="font-extrabold">{full?.age ? `${full.age} yrs` : "—"}</div>
+                                </div>
+                                <div>
+                                    <div className="text-slate-400 text-[10px] uppercase font-bold">Gender</div>
+                                    <div className="font-extrabold">{full?.gender || "—"}</div>
+                                </div>
+                                <div>
+                                    <div className="text-slate-400 text-[10px] uppercase font-bold">Phone</div>
+                                    <div className="font-extrabold">{full?.phone || "—"}</div>
+                                </div>
+                            </div>
+
+                            {/* Treatment table */}
+                            <div>
+                                <table className="w-full text-xs">
+                                    <thead>
+                                        <tr className="border-b-2 border-slate-800 dark:border-slate-200 text-left">
+                                            <th className="py-2 pr-2 font-extrabold w-8">#</th>
+                                            <th className="py-2 px-2 font-extrabold">Treatment / Item</th>
+                                            <th className="py-2 px-2 font-extrabold text-right w-20">Qty</th>
+                                            <th className="py-2 px-2 font-extrabold text-right w-24">Rate</th>
+                                            <th className="py-2 pl-2 font-extrabold text-right w-28">Amount</th>
+                                            <th className="w-8 no-print"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {lineItems.map((r, i) => (
+                                            <tr key={r.id} className="border-b border-slate-100 dark:border-slate-800">
+                                                <td className="py-1.5 pr-2 text-slate-400">{i + 1}</td>
+                                                <td className="py-1.5 px-2">
+                                                    <input
+                                                        value={r.description}
+                                                        onChange={(e) => updateRow(r.id, "description", e.target.value)}
+                                                        placeholder="Treatment / medicine name"
+                                                        className="w-full bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-[#0f4a29]"
+                                                    />
+                                                </td>
+                                                <td className="py-1.5 px-2">
+                                                    <input
+                                                        type="number"
+                                                        value={r.qty}
+                                                        onChange={(e) => updateRow(r.id, "qty", e.target.value)}
+                                                        className="w-full bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-right focus:outline-none focus:border-[#0f4a29]"
+                                                    />
+                                                </td>
+                                                <td className="py-1.5 px-2">
+                                                    <input
+                                                        type="number"
+                                                        value={r.rate}
+                                                        onChange={(e) => updateRow(r.id, "rate", e.target.value)}
+                                                        className="w-full bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-right focus:outline-none focus:border-[#0f4a29]"
+                                                    />
+                                                </td>
+                                                <td className="py-1.5 pl-2 text-right font-extrabold">
+                                                    {fmtINR((Number(r.qty) || 0) * (Number(r.rate) || 0))}
+                                                </td>
+                                                <td className="py-1.5 pl-1 no-print">
+                                                    <button
+                                                        onClick={() => removeRow(r.id)}
+                                                        className="text-slate-300 hover:text-rose-500"
+                                                    >
+                                                        <Trash2 className="w-3.5 h-3.5" />
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                                <button
+                                    onClick={addRow}
+                                    className="no-print mt-2 flex items-center gap-1 text-[11px] font-extrabold text-[#0f4a29] dark:text-[#52b788]"
+                                >
+                                    <Plus className="w-3.5 h-3.5" /> Add Line Item
+                                </button>
+                            </div>
+
+                            {/* Totals */}
+                            <div className="flex justify-end">
+                                <div className="w-full sm:w-72 space-y-1.5 text-xs font-medium">
+                                    <div className="flex justify-between">
+                                        <span className="text-slate-400">Subtotal</span>
+                                        <span className="font-extrabold">{fmtINR(subtotal)}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center">
+                                        <span className="text-slate-400">Discount (₹)</span>
+                                        <input
+                                            type="number"
+                                            value={discount}
+                                            onChange={(e) => setDiscount(e.target.value)}
+                                            className="w-24 bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-right focus:outline-none focus:border-[#0f4a29]"
+                                        />
+                                    </div>
+                                    <div className="flex justify-between items-center">
+                                        <span className="text-slate-400">GST (%)</span>
+                                        <input
+                                            type="number"
+                                            value={gstPercent}
+                                            onChange={(e) => setGstPercent(e.target.value)}
+                                            className="w-24 bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-right focus:outline-none focus:border-[#0f4a29]"
+                                        />
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-slate-400">GST Amount</span>
+                                        <span className="font-extrabold">{fmtINR(gstVal)}</span>
+                                    </div>
+                                    <div className="flex justify-between border-t-2 border-slate-800 dark:border-slate-200 pt-1.5 mt-1.5">
+                                        <span className="font-extrabold">Grand Total</span>
+                                        <span className="font-extrabold">{fmtINR(grandTotal)}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center">
+                                        <span className="text-slate-400">Paid</span>
+                                        <input
+                                            type="number"
+                                            value={paid}
+                                            onChange={(e) => setPaid(e.target.value)}
+                                            className="w-24 bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-right focus:outline-none focus:border-[#0f4a29]"
+                                        />
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="font-extrabold">Balance</span>
+                                        <span
+                                            className={`font-extrabold ${balance > 0 ? "text-rose-500" : "text-[#0f4a29] dark:text-[#52b788]"}`}
+                                        >
+                                            {fmtINR(balance)}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Payment method + notes */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs font-medium border-t border-slate-100 dark:border-slate-800 pt-4">
+                                <div>
+                                    <div className="text-slate-400 text-[10px] uppercase font-bold mb-1">
+                                        Payment Method
+                                    </div>
+                                    <select
+                                        value={paymentMethod}
+                                        onChange={(e) => setPaymentMethod(e.target.value)}
+                                        className="w-full bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-[#0f4a29]"
+                                    >
+                                        {PAYMENT_METHODS.map((m) => (
+                                            <option key={m} value={m}>
+                                                {m}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <div className="text-slate-400 text-[10px] uppercase font-bold mb-1">
+                                        Notes
+                                    </div>
+                                    <input
+                                        value={notes}
+                                        onChange={(e) => setNotes(e.target.value)}
+                                        placeholder="e.g. Next visit date"
+                                        className="w-full bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-[#0f4a29]"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Signature */}
+                            <div className="flex justify-end pt-8">
+                                <div className="text-center">
+                                    <div className="w-40 border-t border-slate-400 dark:border-slate-600 pt-1 text-[11px] font-bold text-slate-500">
+                                        Authorized Signature
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Footer: clinic name + address */}
+                            <div className="text-center border-t border-slate-200 dark:border-slate-800 pt-3">
+                                <p className="text-[11px] font-extrabold text-slate-600 dark:text-slate-300">
+                                    {CLINIC.footerName}
+                                </p>
+                                <p className="text-[10px] text-slate-400 max-w-xl mx-auto leading-snug">
+                                    {CLINIC.footerAddress}
+                                </p>
+                            </div>
+
+                            {/* Actions */}
+                            <div className="no-print flex flex-wrap justify-end gap-2 pt-2">
+                                <button
+                                    onClick={onClose}
+                                    className="px-5 py-2.5 rounded-full text-xs font-extrabold border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300"
+                                >
+                                    Close
+                                </button>
+                                {savedInvoiceId && (
+                                    <button
+                                        onClick={startNewInvoice}
+                                        className="px-5 py-2.5 rounded-full text-xs font-extrabold border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300"
+                                    >
+                                        New Invoice
+                                    </button>
+                                )}
+                                <button
+                                    onClick={handleSave}
+                                    disabled={saving}
+                                    className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 dark:bg-slate-700 text-white text-xs font-extrabold px-5 py-2.5 rounded-full transition-all shadow-xs disabled:opacity-50"
+                                >
+                                    <Save className="w-4 h-4" />
+                                    {saving
+                                        ? "Saving..."
+                                        : savedInvoiceId
+                                            ? "Save as New Invoice"
+                                            : "Save Invoice"}
+                                </button>
+                                <button
+                                    onClick={handlePrint}
+                                    className="flex items-center gap-2 bg-[#0f4a29] hover:bg-[#165a34] text-white text-xs font-extrabold px-5 py-2.5 rounded-full transition-all shadow-xs"
+                                >
+                                    <Printer className="w-4 h-4" /> Print / Save as PDF
+                                </button>
+                            </div>
+                        </div>
+                    </>
+                )}
+            </div>
+        </div>,
+        document.body,
+    );
+}

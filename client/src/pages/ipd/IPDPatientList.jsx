@@ -19,7 +19,8 @@ import {
 } from "./api/ipd.api";
 import IPDPatientForm from "./IPDPatientForm";
 import IPDPatientDetails from "./IPDPatientDetails";
-import { UserPlus, Search, Paperclip, FileText } from "lucide-react";
+import InvoiceModal from "../../components/InvoiceModal";
+import { UserPlus, Search, Paperclip, FileText, Receipt } from "lucide-react";
 
 const PER_PAGE = 7;
 const LATEST_DOCS_SHOWN = 3;
@@ -87,6 +88,7 @@ export default function IPDPatientList({ readOnly = false }) {
   const [deleteId, setDeleteId] = useState(null);
   const [editing, setEditing] = useState(null);
   const [viewing, setViewing] = useState(null);
+  const [invoicing, setInvoicing] = useState(null);
   const navigate = useNavigate();
 
   const load = () => {
@@ -271,6 +273,13 @@ export default function IPDPatientList({ readOnly = false }) {
                         type="delete"
                         onClick={() => setDeleteId(p.id)}
                       />
+                      <button
+                        onClick={() => setInvoicing(p)}
+                        title="Generate Invoice"
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-[#0f4a29] hover:bg-[#0f4a29]/10 transition-colors"
+                      >
+                        <Receipt className="w-4 h-4" />
+                      </button>
                     </div>
                   </Td>
                 )}
@@ -287,6 +296,14 @@ export default function IPDPatientList({ readOnly = false }) {
           name={patients.find((p) => p.id === deleteId)?.name}
           onConfirm={() => handleDelete(deleteId)}
           onCancel={() => setDeleteId(null)}
+        />
+      )}
+
+      {invoicing && (
+        <InvoiceModal
+          type="IPD"
+          patient={invoicing}
+          onClose={() => setInvoicing(null)}
         />
       )}
     </div>

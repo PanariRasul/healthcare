@@ -9,6 +9,7 @@ import ipdRoutes from "./IPD/ipd.routes.js";
 import ipdPaymentRoutes from "./IPD/ipdPayment.routes.js";
 import adminRoutes from "./admin/admin.routes.js";
 import biometricRoutes from "./biometric/biometric.routes.js"; // NEW
+import invoiceRoutes from "./Invoice/invoice.routes.js";
 
 const app = express();
 
@@ -49,5 +50,9 @@ app.use("/api/admin", adminRoutes);
 
 // Biometric attendance module (devices, mappings, punch ingestion,
 app.use("/api/biometric", biometricRoutes);
+
+//Invoice routes
+
+app.use("/api/invoices", invoiceRoutes);
 
 export default app;

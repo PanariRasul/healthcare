@@ -2,7 +2,8 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { fetchPatientPayments, addPayment } from "./api/ipdPayment.api";
-import { X, IndianRupee, Clock, Loader2 } from "lucide-react";
+import InvoiceModal from "../../../components/InvoiceModal";
+import { X, IndianRupee, Clock, Loader2, Receipt } from "lucide-react";
 
 const METHODS = [
   { value: "CASH", label: "Cash" },
@@ -16,12 +17,12 @@ const fmtMoney = (n) => `₹${(n || 0).toLocaleString("en-IN")}`;
 const fmtDateTime = (d) =>
   d
     ? new Date(d).toLocaleString("en-IN", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    })
     : "—";
 
 export default function IPDPaymentModal({ patientId, onClose }) {
@@ -36,6 +37,7 @@ export default function IPDPaymentModal({ patientId, onClose }) {
   const [referenceNumber, setReferenceNumber] = useState("");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  const [invoicing, setInvoicing] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -114,12 +116,23 @@ export default function IPDPaymentModal({ patientId, onClose }) {
               Record new payment or view transactions
             </p>
           </div>
-          <button
-            onClick={close}
-            className="text-slate-400 hover:text-slate-600 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {patient && (
+              <button
+                onClick={() => setInvoicing(true)}
+                title="Generate Invoice"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#0f4a29] hover:bg-[#165a34] text-white text-xs font-extrabold shadow-xs"
+              >
+                <Receipt className="w-3.5 h-3.5" /> Invoice
+              </button>
+            )}
+            <button
+              onClick={close}
+              className="text-slate-400 hover:text-slate-600 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         <div className="p-6 space-y-5">
@@ -296,6 +309,14 @@ export default function IPDPaymentModal({ patientId, onClose }) {
           )}
         </div>
       </div>
+
+      {invoicing && patient && (
+        <InvoiceModal
+          type="IPD"
+          patient={patient}
+          onClose={() => setInvoicing(false)}
+        />
+      )}
     </div>,
     document.body,
   );

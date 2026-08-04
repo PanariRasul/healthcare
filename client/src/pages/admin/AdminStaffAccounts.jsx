@@ -19,7 +19,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 
-const ROLES = ["ADMIN", "DOCTOR", "RECEPTIONIST", "PHARMACY"];
+const ROLES = ["ADMIN", "DOCTOR", "RECEPTIONIST", "PHARMACY", "MANAGER"];
 const MODULES = ["OPD", "IPD", "PHARMACY"];
 
 const ROLE_COLORS = {
@@ -31,6 +31,8 @@ const ROLE_COLORS = {
     "bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-400 border-blue-200",
   PHARMACY:
     "bg-[#0f4a29]/10 text-[#0f4a29] dark:text-[#52b788] border-[#0f4a29]/20",
+  MANAGER:
+    "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400 border-amber-200",
 };
 
 const emptyCreateForm = {
@@ -262,7 +264,7 @@ export default function AdminStaffAccounts() {
               </select>
             </div>
 
-            {createForm.role !== "ADMIN" && (
+            {createForm.role !== "ADMIN" && createForm.role !== "MANAGER" && (
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">
                   Permitted Modules
@@ -380,25 +382,26 @@ export default function AdminStaffAccounts() {
                         </select>
                       </div>
                     </div>
-                    {editForm.role !== "ADMIN" && (
-                      <div className="mb-3">
-                        <label className="block text-[11px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
-                          Modules
-                        </label>
-                        <div className="flex gap-2 flex-wrap">
-                          {MODULES.map((m) => (
-                            <button
-                              type="button"
-                              key={m}
-                              onClick={() => toggleEditModule(m)}
-                              className={`px-3 py-1 rounded-full text-xs font-bold border ${editForm.modules.includes(m) ? "bg-[#0f4a29] text-white border-[#0f4a29]" : "bg-white text-slate-500"}`}
-                            >
-                              {m}
-                            </button>
-                          ))}
+                    {editForm.role !== "ADMIN" &&
+                      editForm.role !== "MANAGER" && (
+                        <div className="mb-3">
+                          <label className="block text-[11px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
+                            Modules
+                          </label>
+                          <div className="flex gap-2 flex-wrap">
+                            {MODULES.map((m) => (
+                              <button
+                                type="button"
+                                key={m}
+                                onClick={() => toggleEditModule(m)}
+                                className={`px-3 py-1 rounded-full text-xs font-bold border ${editForm.modules.includes(m) ? "bg-[#0f4a29] text-white border-[#0f4a29]" : "bg-white text-slate-500"}`}
+                              >
+                                {m}
+                              </button>
+                            ))}
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      )}
                     <div className="flex gap-2 justify-end">
                       <button
                         onClick={() => setEditingId(null)}

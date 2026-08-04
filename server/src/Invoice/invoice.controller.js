@@ -32,7 +32,11 @@ export async function previewNextInvoiceNumber(req, res) {
   try {
     const { patientType } = req.params;
     if (!isValidType(patientType)) {
-      return res.status(400).json({ message: `patientType must be one of: ${TYPE_VALUES.join(", ")}` });
+      return res
+        .status(400)
+        .json({
+          message: `patientType must be one of: ${TYPE_VALUES.join(", ")}`,
+        });
     }
     const invoiceNumber = await generateInvoiceNumber(patientType);
     res.json({ invoiceNumber });
@@ -47,7 +51,11 @@ export async function listPatientInvoices(req, res) {
   try {
     const { patientType, patientId } = req.params;
     if (!isValidType(patientType)) {
-      return res.status(400).json({ message: `patientType must be one of: ${TYPE_VALUES.join(", ")}` });
+      return res
+        .status(400)
+        .json({
+          message: `patientType must be one of: ${TYPE_VALUES.join(", ")}`,
+        });
     }
     const invoices = await prisma.invoice.findMany({
       where: { patientType, patientId },
@@ -63,12 +71,67 @@ export async function listPatientInvoices(req, res) {
 // GET /api/invoices/:id -> single invoice (for reprinting)
 export async function getInvoice(req, res) {
   try {
-    const invoice = await prisma.invoice.findUnique({ where: { id: req.params.id } });
+    const invoice = await prisma.invoice.findUnique({
+      where: { id: req.params.id },
+    });
     if (!invoice) return res.status(404).json({ message: "Invoice not found" });
     res.json(invoice);
   } catch (err) {
     console.error("getInvoice error:", err);
     res.status(500).json({ message: "Failed to fetch invoice" });
+  }
+}
+
+// PUT /api/invoices/:id -> update an existing invoice in place (edit/correct it).
+// invoiceNumber, patientType, patientId, createdBy* are immutable — only the
+// billable content and payment fields can change.
+export async function updateInvoice(req, res) {
+  try {
+    const existing = await prisma.invoice.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!existing)
+      return res.status(404).json({ message: "Invoice not found" });
+
+    const {
+      lineItems,
+      subtotal,
+      discount,
+      gstPercent,
+      gstAmount,
+      grandTotal,
+      paid,
+      balance,
+      paymentMethod,
+      notes,
+    } = req.body;
+
+    if (!Array.isArray(lineItems) || lineItems.length === 0) {
+      return res
+        .status(400)
+        .json({ message: "lineItems must be a non-empty array" });
+    }
+
+    const updated = await prisma.invoice.update({
+      where: { id: req.params.id },
+      data: {
+        lineItems,
+        subtotal: Number(subtotal) || 0,
+        discount: Number(discount) || 0,
+        gstPercent: Number(gstPercent) || 0,
+        gstAmount: Number(gstAmount) || 0,
+        grandTotal: Number(grandTotal) || 0,
+        paid: Number(paid) || 0,
+        balance: Number(balance) || 0,
+        paymentMethod: paymentMethod || null,
+        notes: notes || null,
+      },
+    });
+
+    res.json(updated);
+  } catch (err) {
+    console.error("updateInvoice error:", err);
+    res.status(500).json({ message: "Failed to update invoice" });
   }
 }
 
@@ -89,16 +152,33 @@ export async function createInvoice(req, res) {
       balance,
       paymentMethod,
       notes,
+      createdById,
+      createdByName,
     } = req.body;
 
+    // Prefer the authenticated session (if requireAuth ran on this route and
+    // populated req.user) over whatever the client sent, so this can't be
+    // spoofed. Falls back to the client-supplied values for setups where
+    // this route isn't behind requireAuth yet.
+    const resolvedCreatedById = req.user?.id || createdById || null;
+    const resolvedCreatedByName = req.user?.fullName || createdByName || null;
+
     if (!isValidType(patientType)) {
-      return res.status(400).json({ message: `patientType must be one of: ${TYPE_VALUES.join(", ")}` });
+      return res
+        .status(400)
+        .json({
+          message: `patientType must be one of: ${TYPE_VALUES.join(", ")}`,
+        });
     }
     if (!patientId || !patientName) {
-      return res.status(400).json({ message: "patientId and patientName are required" });
+      return res
+        .status(400)
+        .json({ message: "patientId and patientName are required" });
     }
     if (!Array.isArray(lineItems) || lineItems.length === 0) {
-      return res.status(400).json({ message: "lineItems must be a non-empty array" });
+      return res
+        .status(400)
+        .json({ message: "lineItems must be a non-empty array" });
     }
 
     const invoiceNumber = await generateInvoiceNumber(patientType);
@@ -119,6 +199,8 @@ export async function createInvoice(req, res) {
         balance: Number(balance) || 0,
         paymentMethod: paymentMethod || null,
         notes: notes || null,
+        createdById: resolvedCreatedById,
+        createdByName: resolvedCreatedByName,
       },
     });
 

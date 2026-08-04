@@ -275,22 +275,28 @@ model OPDPatient {
 // relations and keeps invoice history intact even if a patient record is
 // later removed.
 model Invoice {
-  id            String @id @default(cuid())
-  invoiceNumber String @unique
+  id            String   @id @default(cuid())
+  invoiceNumber String   @unique
   patientType   String // "OPD" | "IPD"
   patientId     String
   patientName   String
 
   lineItems     Json // [{ description, qty, rate, amount }]
   subtotal      Float
-  discount      Float   @default(0)
-  gstPercent    Float   @default(0)
-  gstAmount     Float   @default(0)
+  discount      Float    @default(0)
+  gstPercent    Float    @default(0)
+  gstAmount     Float    @default(0)
   grandTotal    Float
-  paid          Float   @default(0)
-  balance       Float   @default(0)
+  paid          Float    @default(0)
+  balance       Float    @default(0)
   paymentMethod String?
   notes         String?
+
+  // Staff member who generated this invoice. Kept as plain fields (not a
+  // relation) for the same reason as patientId — history should survive
+  // even if the user account is later deleted/deactivated.
+  createdById   String?
+  createdByName String?
 
   createdAt DateTime @default(now())
 

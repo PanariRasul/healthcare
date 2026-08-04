@@ -5,6 +5,7 @@ import {
   listPatientInvoices,
   getInvoice,
   createInvoice,
+  updateInvoice,
 } from "./invoice.controller.js";
 
 const router = Router();
@@ -15,6 +16,7 @@ router.get("/patient/:patientType/:patientId", listPatientInvoices);
 
 router.get("/:id", getInvoice);
 router.post("/", createInvoice);
+router.put("/:id", updateInvoice);
 
 export default router;
 

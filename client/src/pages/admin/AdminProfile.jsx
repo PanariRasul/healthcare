@@ -1,13 +1,17 @@
 // client/src/pages/admin/AdminProfile.jsx
-// Admin's own profile page — same restrained style as the shared
-// pages/profile/Profile.jsx (plain white cards, one soft accent color, no
-// gradient banners or colored icon chips), just with admin-specific content.
-// Lives at its own route (/admin/profile), separate from the shared
-// /profile used by Doctor/Receptionist/Pharmacy.
 import { useState } from "react";
 import { useAuth } from "../../context/AuthContext";
+import { PageHeader } from "../../components/UI";
 import {
-  Mail, Phone, ShieldCheck, Layers, KeyRound, Loader2, Eye, EyeOff, CheckCircle2,
+  Mail,
+  Phone,
+  ShieldCheck,
+  Layers,
+  KeyRound,
+  Loader2,
+  Eye,
+  EyeOff,
+  CheckCircle2,
 } from "lucide-react";
 
 const API_BASE = `${import.meta.env.VITE_API_URL || "http://localhost:4000"}/api`;
@@ -74,16 +78,25 @@ export default function AdminProfile() {
   if (!user) return null;
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
-      {/* Profile overview */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm">
+    <div className="max-w-7xl mx-auto space-y-6 font-sans text-slate-900 bg-[#f4f5f7] dark:bg-slate-950 p-2 sm:p-4 rounded-3xl">
+      <PageHeader
+        title="Admin Profile"
+        subtitle="Manage account credentials and security settings"
+      />
+
+      {/* Profile Overview Card */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-[28px] p-6 shadow-xs">
         <div className="flex items-center gap-4 mb-6">
-          <div className="w-16 h-16 rounded-full bg-gradient-to-br from-teal-500 to-cyan-400 flex items-center justify-center text-white text-2xl font-bold flex-shrink-0 shadow-sm">
-            {user.username?.[0]?.toUpperCase() || "?"}
+          <div className="w-16 h-16 rounded-2xl bg-[#0f4a29] text-[#52b788] flex items-center justify-center text-2xl font-extrabold shrink-0">
+            {user.username?.[0]?.toUpperCase() || "A"}
           </div>
           <div className="min-w-0">
-            <h2 className="text-lg font-bold text-slate-800 dark:text-white truncate">{user.username}</h2>
-            <p className="text-sm text-slate-500 dark:text-slate-400">Administrator</p>
+            <h2 className="text-xl font-extrabold text-slate-900 dark:text-white truncate">
+              {user.username}
+            </h2>
+            <p className="text-xs font-bold text-[#0f4a29] dark:text-[#52b788] mt-0.5">
+              Administrator
+            </p>
           </div>
         </div>
 
@@ -91,15 +104,21 @@ export default function AdminProfile() {
           <InfoRow icon={Mail} label="Email" value={user.email} />
           <InfoRow icon={Phone} label="Phone" value={user.phone} />
           <InfoRow icon={ShieldCheck} label="Role" value="Admin" />
-          <InfoRow icon={Layers} label="Access" value="All modules (OPD, IPD, Pharmacy)" />
+          <InfoRow
+            icon={Layers}
+            label="Access Level"
+            value="All Modules (OPD, IPD, Pharmacy)"
+          />
         </div>
       </div>
 
-      {/* Change password */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm">
-        <div className="flex items-center gap-2 mb-5">
-          <KeyRound className="w-4 h-4 text-teal-600 dark:text-teal-400" />
-          <h3 className="text-sm font-semibold text-slate-800 dark:text-white">Change Password</h3>
+      {/* Password Form Card */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-[28px] p-6 shadow-xs">
+        <div className="flex items-center gap-2 mb-5 pb-3 border-b border-slate-100 dark:border-slate-800">
+          <KeyRound className="w-4 h-4 text-[#0f4a29] dark:text-[#52b788]" />
+          <h3 className="text-xs font-extrabold text-slate-900 dark:text-white uppercase tracking-wider">
+            Change Password
+          </h3>
         </div>
 
         <form onSubmit={handleChangePassword} className="space-y-4">
@@ -129,24 +148,26 @@ export default function AdminProfile() {
           />
 
           {error && (
-            <div className="bg-rose-50 dark:bg-rose-950/20 border border-rose-100 dark:border-rose-900/30 rounded-xl px-4 py-3 text-rose-600 dark:text-rose-400 text-xs font-medium">
+            <div className="bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/30 rounded-2xl px-4 py-3 text-rose-600 dark:text-rose-400 text-xs font-bold">
               {error}
             </div>
           )}
           {success && (
-            <div className="bg-teal-50 dark:bg-teal-950/20 border border-teal-100 dark:border-teal-900/30 rounded-xl px-4 py-3 text-teal-700 dark:text-teal-400 text-xs font-medium flex items-center gap-2">
-              <CheckCircle2 className="w-3.5 h-3.5" /> {success}
+            <div className="bg-[#0f4a29]/10 dark:bg-[#52b788]/20 border border-[#0f4a29]/20 text-[#0f4a29] dark:text-[#52b788] rounded-2xl px-4 py-3 text-xs font-bold flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4" /> {success}
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full sm:w-auto bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-white text-white dark:text-slate-950 font-bold text-sm px-6 py-3 rounded-xl transition-all duration-200 shadow-md hover:shadow-xl active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
-            {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-            {loading ? "Updating..." : "Update Password"}
-          </button>
+          <div className="pt-2">
+            <button
+              type="submit"
+              disabled={loading}
+              className="bg-[#0f4a29] hover:bg-[#165a34] text-white font-extrabold text-xs px-6 py-3 rounded-full transition-all shadow-xs disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+              {loading ? "Updating Password..." : "Update Password"}
+            </button>
+          </div>
         </form>
       </div>
     </div>
@@ -155,20 +176,31 @@ export default function AdminProfile() {
 
 function InfoRow({ icon: Icon, label, value }) {
   return (
-    <div className="flex items-start gap-3 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40">
-      <Icon className="w-4 h-4 text-slate-400 dark:text-slate-500 mt-0.5 flex-shrink-0" />
+    <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800">
+      <Icon className="w-4 h-4 text-[#0f4a29] dark:text-[#52b788] mt-0.5 shrink-0" />
       <div className="min-w-0">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">{label}</p>
-        <p className="text-sm font-medium text-slate-800 dark:text-white truncate">{value || "—"}</p>
+        <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+          {label}
+        </p>
+        <p className="text-xs font-bold text-slate-900 dark:text-white truncate mt-0.5">
+          {value || "—"}
+        </p>
       </div>
     </div>
   );
 }
 
-function PasswordField({ label, value, onChange, show, setShow, autoComplete }) {
+function PasswordField({
+  label,
+  value,
+  onChange,
+  show,
+  setShow,
+  autoComplete,
+}) {
   return (
     <div>
-      <label className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 block mb-1.5">
+      <label className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400 block mb-1.5">
         {label}
       </label>
       <div className="relative">
@@ -177,12 +209,12 @@ function PasswordField({ label, value, onChange, show, setShow, autoComplete }) 
           value={value}
           onChange={(e) => onChange(e.target.value)}
           autoComplete={autoComplete}
-          className="w-full bg-slate-50/50 dark:bg-slate-950/30 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 pr-11 text-slate-800 dark:text-slate-100 placeholder-slate-400/70 dark:placeholder-slate-600 focus:outline-none focus:border-teal-500 dark:focus:border-teal-500 focus:bg-white dark:focus:bg-slate-950 focus:shadow-[0_0_0_4px_rgba(20,184,166,0.1)] dark:focus:shadow-[0_0_0_4px_rgba(20,184,166,0.05)] transition-all duration-200 text-sm"
+          className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 pr-11 text-xs font-medium text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-[#0f4a29] transition-all"
         />
         <button
           type="button"
           onClick={() => setShow((s) => !s)}
-          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors"
+          className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
           tabIndex={-1}
         >
           {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}

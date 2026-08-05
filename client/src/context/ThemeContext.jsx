@@ -4,10 +4,18 @@ import { createContext, useContext, useEffect, useState } from "react";
 const ThemeContext = createContext(null);
 
 export const ThemeProvider = ({ children }) => {
+  // const [dark, setDark] = useState(() => {
+  //   const stored = localStorage.getItem("hms_theme");
+  //   if (stored) return stored === "dark";
+  //   return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  // });
+
   const [dark, setDark] = useState(() => {
-    const stored = localStorage.getItem("hms_theme");
+    const stored = localStorage.setItem("hms_theme", "light");
     if (stored) return stored === "dark";
-    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+
+    // Default to light mode
+    return false;
   });
 
   useEffect(() => {
@@ -20,7 +28,7 @@ export const ThemeProvider = ({ children }) => {
     localStorage.setItem("hms_theme", dark ? "dark" : "light");
   }, [dark]);
 
-  const toggle = () => setDark(d => !d);
+  const toggle = () => setDark((d) => !d);
 
   return (
     <ThemeContext.Provider value={{ dark, toggle }}>

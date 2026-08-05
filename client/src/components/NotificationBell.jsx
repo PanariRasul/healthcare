@@ -45,7 +45,10 @@ export default function NotificationBell() {
     fetchMedicines();
     fetchReadKeys();
     const interval = setInterval(fetchMedicines, REFRESH_MS);
-    return () => { cancelled = true; clearInterval(interval); };
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [canSeeMedicines]);
 
   if (!canSeeMedicines) return null;
@@ -56,13 +59,13 @@ export default function NotificationBell() {
   // and only for the doctor role — everyone else sees the full set.
   const isDoctor = user?.role === "doctor";
   const allNotifications = getMedicineNotifications(medicines).filter(
-    (n) => !(isDoctor && n.key.endsWith(":out-of-stock"))
+    (n) => !(isDoctor && n.key.endsWith(":out-of-stock")),
   );
-  const visible = allNotifications.filter(n => !readKeys.has(n.key));
+  const visible = allNotifications.filter((n) => !readKeys.has(n.key));
 
   const markAsRead = async (key) => {
     // Optimistic update — feels instant, matches how the rest of the app behaves.
-    setReadKeys(prev => new Set(prev).add(key));
+    setReadKeys((prev) => new Set(prev).add(key));
     try {
       await api.post("/notifications/read", { keys: [key] });
     } catch {
@@ -71,11 +74,11 @@ export default function NotificationBell() {
   };
 
   const clearAll = async () => {
-    const keys = visible.map(n => n.key);
+    const keys = visible.map((n) => n.key);
     if (keys.length === 0) return;
-    setReadKeys(prev => {
+    setReadKeys((prev) => {
       const next = new Set(prev);
-      keys.forEach(k => next.add(k));
+      keys.forEach((k) => next.add(k));
       return next;
     });
     try {
@@ -96,7 +99,7 @@ export default function NotificationBell() {
   return (
     <div className="relative">
       <button
-        onClick={() => setOpen(o => !o)}
+        onClick={() => setOpen((o) => !o)}
         className="relative w-9 h-9 flex items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-700 dark:hover:text-white transition-all duration-200"
         title="Notifications"
       >
@@ -113,11 +116,13 @@ export default function NotificationBell() {
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
           <div className="absolute right-0 mt-2 w-80 max-w-[90vw] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl z-40 overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-800">
-              <span className="text-sm font-semibold text-slate-800 dark:text-white">Notifications</span>
+              <span className="text-sm font-semibold text-slate-800 dark:text-white">
+                Notifications
+              </span>
               {visible.length > 0 && (
                 <button
                   onClick={clearAll}
-                  className="flex items-center gap-1 text-xs text-teal-600 dark:text-teal-400 hover:underline font-medium"
+                  className="flex items-center gap-1 text-xs text-[#0e3b22] dark:text-[#52b788] hover:underline font-medium"
                 >
                   <CheckCheck className="w-3.5 h-3.5" /> Clear all
                 </button>
@@ -129,24 +134,34 @@ export default function NotificationBell() {
                   You're all caught up
                 </div>
               ) : (
-                visible.map(n => (
+                visible.map((n) => (
                   <div
                     key={n.key}
                     className="flex items-start gap-3 px-4 py-3 border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
                   >
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-                      n.severity === "critical"
-                        ? "bg-red-50 dark:bg-red-500/15 text-red-600 dark:text-red-400"
-                        : "bg-amber-50 dark:bg-amber-500/15 text-amber-600 dark:text-amber-400"
-                    }`}>
-                      {n.type === "expiry" ? <Clock className="w-4 h-4" /> : <Package className="w-4 h-4" />}
+                    <div
+                      className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+                        n.severity === "critical"
+                          ? "bg-red-50 dark:bg-red-500/15 text-red-600 dark:text-red-400"
+                          : "bg-amber-50 dark:bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                      }`}
+                    >
+                      {n.type === "expiry" ? (
+                        <Clock className="w-4 h-4" />
+                      ) : (
+                        <Package className="w-4 h-4" />
+                      )}
                     </div>
                     <button
                       onClick={() => handleItemClick(n)}
                       className={`flex-1 min-w-0 text-left ${isPharmacy ? "cursor-pointer" : "cursor-default"}`}
                     >
-                      <div className="text-sm font-medium text-slate-800 dark:text-white truncate">{n.title}</div>
-                      <div className="text-xs text-slate-500 dark:text-slate-400">{n.message}</div>
+                      <div className="text-sm font-medium text-slate-800 dark:text-white truncate">
+                        {n.title}
+                      </div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400">
+                        {n.message}
+                      </div>
                     </button>
                     <button
                       onClick={() => markAsRead(n.key)}

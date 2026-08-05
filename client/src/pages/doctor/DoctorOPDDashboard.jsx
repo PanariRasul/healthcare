@@ -1,37 +1,48 @@
 // client/src/pages/doctor/DoctorOPDDashboard.jsx
-// Replace your existing DoctorOPDDashboard.jsx with this file.
-//
-// This is now JUST the dashboard overview content — tabs live in
-// DoctorOPDLayout.jsx as real routes, so this component doesn't need to know
-// about "patients" / "followups" tabs anymore. It renders at /doctor/opd/dashboard.
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../../lib/api";
+import { PageHeader } from "../../components/UI";
 import {
-  Users, CalendarClock, AlertTriangle, Activity, Loader2, ArrowRight, IndianRupee,
+  Users,
+  CalendarClock,
+  AlertTriangle,
+  Activity,
+  Loader2,
+  ArrowRight,
+  IndianRupee,
+  ShieldAlert,
 } from "lucide-react";
 
-function StatCard({ icon: Icon, label, value, accent }) {
+function StatCard({ icon: Icon, label, value }) {
   return (
-    <div className="bg-white/50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 flex items-center gap-4 shadow-sm">
-      <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${accent.iconWrap}`}>
-        <Icon className="w-5 h-5" strokeWidth={2.25} />
+    <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-[28px] p-5 flex items-center gap-4 shadow-xs">
+      <div className="w-10 h-10 rounded-2xl bg-[#0f4a29]/10 text-[#0f4a29] dark:text-[#52b788] flex items-center justify-center shrink-0">
+        <Icon className="w-5 h-5" strokeWidth={2.5} />
       </div>
       <div className="min-w-0">
-        <p className="text-2xl font-bold text-slate-800 dark:text-white leading-none">{value}</p>
-        <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mt-1.5">{label}</p>
+        <p className="text-2xl font-extrabold text-slate-900 dark:text-white leading-none">
+          {value}
+        </p>
+        <p className="text-xs font-bold text-slate-400 dark:text-slate-500 mt-1.5">
+          {label}
+        </p>
       </div>
     </div>
   );
 }
 
 const conditionColors = {
-  Critical:  "bg-red-50 dark:bg-red-500/15 text-red-700 dark:text-red-400 border-red-200 dark:border-red-500/20",
-  Chronic:   "bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/20",
-  Mild:      "bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/20",
-  Improving: "bg-blue-50 dark:bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-500/20",
-  Stable:    "bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20",
-  Good:      "bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20",
+  Critical:
+    "bg-rose-50 text-rose-700 dark:bg-rose-950/30 dark:text-rose-400 border-rose-200",
+  Chronic:
+    "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400 border-amber-200",
+  Mild: "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400 border-amber-200",
+  Improving:
+    "bg-[#0f4a29]/10 text-[#0f4a29] dark:text-[#52b788] border-[#0f4a29]/20",
+  Stable:
+    "bg-[#0f4a29]/10 text-[#0f4a29] dark:text-[#52b788] border-[#0f4a29]/20",
+  Good: "bg-[#0f4a29]/10 text-[#0f4a29] dark:text-[#52b788] border-[#0f4a29]/20",
 };
 
 export function DoctorOPDDashboard() {
@@ -50,20 +61,24 @@ export function DoctorOPDDashboard() {
         if (cancelled) return;
         setStats(data);
       } catch (err) {
-        if (!cancelled) setError(err.message || "Could not load dashboard data.");
+        if (!cancelled)
+          setError(err.message || "Could not load dashboard data.");
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
     load();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <div className="flex items-center gap-3 text-slate-400 dark:text-slate-500 text-sm font-medium">
-          <Loader2 className="w-5 h-5 animate-spin" /> Loading dashboard...
+        <div className="flex items-center gap-3 text-slate-400 text-xs font-bold">
+          <Loader2 className="w-5 h-5 animate-spin text-[#0f4a29]" /> Loading
+          dashboard...
         </div>
       </div>
     );
@@ -71,148 +86,170 @@ export function DoctorOPDDashboard() {
 
   if (error) {
     return (
-      <div className="bg-rose-50 dark:bg-rose-950/20 border border-rose-100 dark:border-rose-900/30 rounded-xl px-4 py-3 text-rose-600 dark:text-rose-400 text-sm font-medium">
+      <div className="bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/30 rounded-2xl px-4 py-3 text-rose-600 dark:text-rose-400 text-xs font-bold">
         {error}
       </div>
     );
   }
 
   const {
-    totalPatients, seenToday, pendingFollowUps, criticalCount,
-    recentPatients, criticalPatients,
+    totalPatients,
+    seenToday,
+    pendingFollowUps,
+    criticalCount,
+    recentPatients,
+    criticalPatients,
   } = stats;
 
   return (
-    // Outer wrapper carries the watermark background so it sits behind every card,
-    // and content sits in a relatively-positioned layer above it (z-10).
-    <div className="relative p-3 sm:p-6 max-w-7xl mx-auto w-full overflow-hidden">
-      {/* Background watermark image */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 -z-0 bg-no-repeat opacity-[0.6] dark:opacity-[0.4]"
-        style={{
-          backgroundImage: "url('/healthcare-icon.png')",
-          backgroundSize: "1000px 1000px",      // Width Height
-          backgroundPosition: "center -150px", // Move image upward
-        }}
+    <div className="space-y-6 font-sans text-slate-900 bg-[#f4f5f7] dark:bg-slate-950 p-2 sm:p-4 rounded-3xl">
+      <PageHeader
+        title="Doctor OPD Dashboard"
+        subtitle="Outpatient consultations, recent activity, and critical alerts"
       />
 
-      {/* Everything below sits above the watermark */}
-      <div className="relative z-10 space-y-6">
-        {/* Stat cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard
-            icon={Users}
-            label="Patients Today"
-            value={seenToday}
-            accent={{ iconWrap: "bg-teal-100 dark:bg-teal-500/20 text-teal-600 dark:text-teal-400" }}
-          />
-          <StatCard
-            icon={Activity}
-            label="Total OPD Patients"
-            value={totalPatients}
-            accent={{ iconWrap: "bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400" }}
-          />
-          <StatCard
-            icon={CalendarClock}
-            label="Pending Follow-Ups"
-            value={pendingFollowUps}
-            accent={{ iconWrap: "bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-400" }}
-          />
-          <StatCard
-            icon={AlertTriangle}
-            label="Critical Patients"
-            value={criticalCount}
-            accent={{ iconWrap: "bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-400" }}
-          />
-        </div>
+      {/* Stat Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard icon={Users} label="Patients Today" value={seenToday} />
+        <StatCard
+          icon={Activity}
+          label="Total OPD Patients"
+          value={totalPatients}
+        />
+        <StatCard
+          icon={CalendarClock}
+          label="Pending Follow-Ups"
+          value={pendingFollowUps}
+        />
+        <StatCard
+          icon={AlertTriangle}
+          label="Critical Patients"
+          value={criticalCount}
+        />
+      </div>
 
-        {/* Critical patients callout */}
-        {criticalPatients.length > 0 && (
-          <div className="bg-white/50 dark:bg-slate-900/50 border border-red-200 dark:border-red-500/20 rounded-2xl p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <AlertTriangle className="w-4 h-4 text-red-500" />
-              <h3 className="text-sm font-semibold text-slate-800 dark:text-white">Needs Attention</h3>
-            </div>
-            <div className="space-y-2">
-              {criticalPatients.slice(0, 4).map(p => (
-                <div key={p.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-50/10 dark:bg-slate-800/10">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <span className="font-mono text-xs text-teal-600 dark:text-teal-400 font-bold flex-shrink-0">{p.serialNumber}</span>
-                    <span className="text-sm text-slate-800 dark:text-white font-medium truncate">{p.name}</span>
-                  </div>
-                  <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border flex-shrink-0 ${conditionColors.Critical}`}>
-                    Critical
+      {/* Critical Patients Callout */}
+      {criticalPatients.length > 0 && (
+        <div className="bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900/40 rounded-[28px] p-5 shadow-xs">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertTriangle className="w-4 h-4 text-rose-500" />
+            <h3 className="text-xs font-extrabold text-slate-900 dark:text-white uppercase tracking-wider">
+              Needs Immediate Attention
+            </h3>
+          </div>
+          <div className="space-y-2">
+            {criticalPatients.slice(0, 4).map((p) => (
+              <div
+                key={p.id}
+                className="flex items-center justify-between px-3.5 py-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className="font-mono text-xs text-[#0f4a29] dark:text-[#52b788] font-extrabold shrink-0">
+                    #{p.serialNumber}
                   </span>
+                  <span className="text-xs text-slate-900 dark:text-white font-extrabold truncate">
+                    {p.name}
+                  </span>
+                </div>
+                <span
+                  className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border shrink-0 ${conditionColors.Critical}`}
+                >
+                  Critical
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Recent Patients + Quick Actions */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <div className="lg:col-span-2 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-[28px] p-5 shadow-xs">
+          <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-100 dark:border-slate-800">
+            <h3 className="text-xs font-extrabold text-slate-900 dark:text-white uppercase tracking-wider">
+              Recent OPD Consultations
+            </h3>
+            <button
+              onClick={() => navigate("/doctor/opd/patients")}
+              className="flex items-center gap-1 text-xs font-extrabold text-[#0f4a29] dark:text-[#52b788] hover:underline"
+            >
+              View all <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          {recentPatients.length === 0 ? (
+            <p className="text-xs text-slate-400 py-6 text-center font-medium">
+              No recent consultations.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {recentPatients.map((p) => (
+                <div
+                  key={p.id}
+                  className="flex items-center justify-between px-3 py-2 border-b border-slate-100 dark:border-slate-800/60 last:border-0"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-8 h-8 rounded-full bg-[#0f4a29]/10 text-[#0f4a29] dark:text-[#52b788] flex items-center justify-center text-xs font-extrabold shrink-0">
+                      {p.name[0]}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-extrabold text-slate-900 dark:text-white truncate">
+                        {p.name}
+                      </p>
+                      <p className="text-[10px] text-slate-400 font-medium">
+                        #{p.serialNumber} • {p.visitDate}
+                      </p>
+                    </div>
+                  </div>
+                  {p.condition && (
+                    <span
+                      className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border shrink-0 ${
+                        conditionColors[p.condition] || conditionColors.Stable
+                      }`}
+                    >
+                      {p.condition}
+                    </span>
+                  )}
                 </div>
               ))}
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
-        {/* Recent patients + quick links */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div className="lg:col-span-2 bg-white/50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-2xl p-5">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-slate-800 dark:text-white">Recent Patients</h3>
-              <button
-                onClick={() => navigate("/doctor/opd/patients")}
-                className="flex items-center gap-1 text-xs font-semibold text-teal-600 dark:text-teal-400 hover:underline"
-              >
-                View all <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            {recentPatients.length === 0 ? (
-              <p className="text-sm text-slate-400 dark:text-slate-500 py-6 text-center">No patients yet.</p>
-            ) : (
-              <div className="space-y-1.5">
-                {recentPatients.map(p => (
-                  <div key={p.id} className="flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="w-8 h-8 rounded-full bg-teal-50 dark:bg-teal-500/20 text-teal-600 dark:text-teal-400 flex items-center justify-center text-xs font-bold flex-shrink-0">
-                        {p.name[0]}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-slate-800 dark:text-white truncate">{p.name}</p>
-                        <p className="text-xs text-slate-400 dark:text-slate-500">{p.serialNumber} · {p.visitDate}</p>
-                      </div>
-                    </div>
-                    {p.condition && (
-                      <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border flex-shrink-0 ${conditionColors[p.condition] || conditionColors.Stable}`}>
-                        {p.condition}
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="bg-white/50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-2xl p-5">
-            <h3 className="text-sm font-semibold text-slate-800 dark:text-white mb-3">Quick Actions</h3>
-            <div className="space-y-2">
-              <button
-                onClick={() => navigate("/doctor/opd/followups")}
-                className="w-full flex items-center justify-between px-3.5 py-3 rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 text-amber-700 dark:text-amber-400 text-sm font-medium hover:bg-amber-100 dark:hover:bg-amber-500/15 transition-colors"
-              >
-                <span className="flex items-center gap-2"><CalendarClock className="w-4 h-4" /> Review Follow-Ups</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
-              <button
-                onClick={() => navigate("/doctor/opd/patients")}
-                className="w-full flex items-center justify-between px-3.5 py-3 rounded-xl bg-teal-50 dark:bg-teal-500/10 border border-teal-200 dark:border-teal-500/20 text-teal-700 dark:text-teal-400 text-sm font-medium hover:bg-teal-100 dark:hover:bg-teal-500/15 transition-colors"
-              >
-                <span className="flex items-center gap-2"><Users className="w-4 h-4" /> View All Patients</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
-              <button
-                onClick={() => navigate("/doctor/opd/revenue")}
-                className="w-full flex items-center justify-between px-3.5 py-3 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 text-emerald-700 dark:text-emerald-400 text-sm font-medium hover:bg-emerald-100 dark:hover:bg-emerald-500/15 transition-colors"
-              >
-                <span className="flex items-center gap-2"><IndianRupee className="w-4 h-4" /> View Revenue</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            </div>
+        <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-[28px] p-5 shadow-xs">
+          <h3 className="text-xs font-extrabold text-slate-900 dark:text-white uppercase tracking-wider mb-4 pb-2 border-b border-slate-100 dark:border-slate-800">
+            Quick Actions
+          </h3>
+          <div className="space-y-2.5">
+            <button
+              onClick={() => navigate("/doctor/opd/followups")}
+              className="w-full flex items-center justify-between px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/60 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold hover:border-[#0f4a29] transition-all"
+            >
+              <span className="flex items-center gap-2">
+                <CalendarClock className="w-4 h-4 text-[#0f4a29] dark:text-[#52b788]" />{" "}
+                Review Follow-Ups
+              </span>
+              <ArrowRight className="w-4 h-4 text-slate-400" />
+            </button>
+            <button
+              onClick={() => navigate("/doctor/opd/patients")}
+              className="w-full flex items-center justify-between px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/60 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold hover:border-[#0f4a29] transition-all"
+            >
+              <span className="flex items-center gap-2">
+                <Users className="w-4 h-4 text-[#0f4a29] dark:text-[#52b788]" />{" "}
+                View All Patients
+              </span>
+              <ArrowRight className="w-4 h-4 text-slate-400" />
+            </button>
+            <button
+              onClick={() => navigate("/doctor/opd/revenue")}
+              className="w-full flex items-center justify-between px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/60 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold hover:border-[#0f4a29] transition-all"
+            >
+              <span className="flex items-center gap-2">
+                <IndianRupee className="w-4 h-4 text-[#0f4a29] dark:text-[#52b788]" />{" "}
+                View Revenue
+              </span>
+              <ArrowRight className="w-4 h-4 text-slate-400" />
+            </button>
           </div>
         </div>
       </div>

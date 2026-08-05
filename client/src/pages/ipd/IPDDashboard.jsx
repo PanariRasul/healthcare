@@ -4,8 +4,14 @@ import { useNavigate } from "react-router-dom";
 import { fetchIpdStats } from "./api/ipd.api";
 import { StatCard, PageHeader, StatusBadge } from "../../components/UI";
 import {
-  BedDouble, Pill, CheckCircle2, AlertTriangle, UserPlus,
-  TrendingUp, Users, DollarSign,
+  BedDouble,
+  Pill,
+  CheckCircle2,
+  AlertTriangle,
+  UserPlus,
+  TrendingUp,
+  Users,
+  Loader2,
 } from "lucide-react";
 
 export default function IPDDashboard() {
@@ -18,48 +24,59 @@ export default function IPDDashboard() {
     let cancelled = false;
     setLoading(true);
     fetchIpdStats()
-      .then((data) => { if (!cancelled) setStats(data); })
-      .catch((err) => { if (!cancelled) setError(err.message); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+      .then((data) => {
+        if (!cancelled) setStats(data);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   if (loading) {
-    return <div className="p-6 text-sm text-slate-400">Loading dashboard…</div>;
+    return (
+      <div className="flex items-center justify-center py-16">
+        <div className="flex items-center gap-3 text-slate-400 text-xs font-bold">
+          <Loader2 className="w-5 h-5 animate-spin text-[#0f4a29]" /> Loading
+          IPD dashboard...
+        </div>
+      </div>
+    );
   }
   if (error) {
-    return <div className="p-6 text-sm text-red-500">Failed to load dashboard: {error}</div>;
+    return (
+      <div className="bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/30 rounded-2xl p-4 text-rose-600 dark:text-rose-400 text-xs font-bold">
+        Failed to load dashboard: {error}
+      </div>
+    );
   }
 
   const {
-    totalAdmittedEver, activeCount, dischargedCount, totalBalance,
-    totalDeposits, totalCash, totalUpi, activePatients, recentDischarges,
+    totalAdmittedEver,
+    activeCount,
+    dischargedCount,
+    totalBalance,
+    totalDeposits,
+    totalCash,
+    totalUpi,
+    activePatients,
+    recentDischarges,
   } = stats;
 
   return (
-    // Outer wrapper carries the watermark background so it sits behind every card,
-    // and content sits in a relatively-positioned layer above it (z-10).
-    <div className="relative p-3 sm:p-6 max-w-7xl mx-auto w-full overflow-hidden">
-      {/* Background watermark image */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 -z-0 bg-no-repeat opacity-[0.6] dark:opacity-[0.4]"
-        style={{
-          backgroundImage: "url('/healthcare-icon.png')",
-          backgroundSize: "1000px 1000px",      // Width Height
-          backgroundPosition: "center -110px", // Move image upward
-        }}
-      />
-
-      {/* Everything below sits above the watermark */}
-      <div className="relative z-10">
+    <div className="space-y-6 font-sans text-slate-900 bg-[#f4f5f7] dark:bg-slate-950 p-2 sm:p-4 rounded-3xl">
       <PageHeader
         title="IPD Dashboard"
-        subtitle="Inpatient Department Overview"
+        subtitle="Inpatient Department admissions, active bed occupancy, and revenue"
         action={
           <button
             onClick={() => navigate("/ipd/admit")}
-            className="flex items-center justify-center gap-2 w-full sm:w-auto bg-gradient-to-r from-violet-500 to-purple-400 text-white text-sm font-semibold px-4 py-2.5 rounded-xl hover:scale-[1.02] transition-transform shadow-lg shadow-violet-500/20"
+            className="flex items-center gap-2 bg-[#0f4a29] hover:bg-[#165a34] text-white text-xs font-extrabold px-5 py-2.5 rounded-full transition-all shadow-xs"
           >
             <UserPlus className="w-4 h-4" />
             <span>Admit Patient</span>
@@ -67,45 +84,79 @@ export default function IPDDashboard() {
         }
       />
 
-      {/* Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8">
-        <StatCard label="Total Admitted"   value={totalAdmittedEver}                       icon={BedDouble}     color="purple" />
-        <StatCard label="Active Patients"  value={activeCount}                             icon={Pill}          color="blue"   sub="Currently admitted" />
-        <StatCard label="Discharged"       value={dischargedCount}                         icon={CheckCircle2}  color="green"  sub="Successfully treated" />
-        <StatCard label="Pending Balance"  value={`₹${totalBalance.toLocaleString()}`}     icon={AlertTriangle} color="red"    sub="From active patients" />
+      {/* Top Stats Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard
+          label="Total Admitted"
+          value={totalAdmittedEver}
+          icon={BedDouble}
+          color="green"
+        />
+        <StatCard
+          label="Active Patients"
+          value={activeCount}
+          icon={Pill}
+          color="green"
+          sub="Currently admitted"
+        />
+        <StatCard
+          label="Discharged"
+          value={dischargedCount}
+          icon={CheckCircle2}
+          color="green"
+          sub="Successfully treated"
+        />
+        <StatCard
+          label="Pending Balance"
+          value={`₹${totalBalance.toLocaleString()}`}
+          icon={AlertTriangle}
+          color="red"
+          sub="From active patients"
+        />
       </div>
 
-      {/* Main Content Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-        {/* Active patients list */}
-        <div className="bg-white/50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-sm dark:shadow-none transition-colors duration-300">
-          <div className="flex items-center justify-between px-4 sm:px-5 py-4 border-b border-slate-200 dark:border-slate-800">
-            <h3 className="text-slate-800 dark:text-white font-semibold text-sm flex items-center gap-2">
-              <Users className="w-4 h-4 text-slate-400 dark:text-slate-500" /> Active Patients
+      {/* Main Grid Layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* Active Patients Panel */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-[28px] p-5 shadow-xs flex flex-col justify-between">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 mb-2">
+            <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-900 dark:text-white flex items-center gap-2">
+              <Users className="w-4 h-4 text-[#0f4a29] dark:text-[#52b788]" />{" "}
+              Active Inpatients
             </h3>
             <button
               onClick={() => navigate("/ipd/patients")}
-              className="text-violet-600 dark:text-violet-400 text-xs hover:text-violet-700 dark:hover:text-violet-300 font-medium transition-colors"
+              className="text-xs font-extrabold text-[#0f4a29] dark:text-[#52b788] hover:underline"
             >
               View All →
             </button>
           </div>
-          <div className="divide-y divide-slate-100 dark:divide-slate-800/50">
+          <div className="divide-y divide-slate-100 dark:divide-slate-800/60 flex-1">
             {activePatients.length === 0 ? (
-              <p className="p-5 text-xs text-slate-400 text-center">No active inpatients currently admitted.</p>
+              <p className="p-8 text-xs text-slate-400 font-medium text-center">
+                No active inpatients currently admitted.
+              </p>
             ) : (
-              activePatients.slice(0, 8).map(p => (
-                <div key={p.id} className="flex items-center gap-3 px-4 sm:px-5 py-3.5 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
-                  <div className="w-9 h-9 rounded-full bg-violet-50 dark:bg-violet-500/20 text-violet-600 dark:text-violet-400 flex items-center justify-center font-bold text-sm border border-violet-100 dark:border-transparent flex-shrink-0">
+              activePatients.slice(0, 8).map((p) => (
+                <div key={p.id} className="flex items-center gap-3 py-3 px-1">
+                  <div className="w-8 h-8 rounded-full bg-[#0f4a29]/10 text-[#0f4a29] dark:text-[#52b788] flex items-center justify-center font-extrabold text-xs shrink-0">
                     {p.name[0]}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-slate-800 dark:text-white text-sm font-medium truncate">{p.name}</div>
-                    <div className="text-slate-400 dark:text-slate-500 text-xs truncate">Admitted: {new Date(p.admissionDate).toLocaleDateString()}</div>
+                    <div className="text-slate-900 dark:text-white text-xs font-extrabold truncate">
+                      {p.name}
+                    </div>
+                    <div className="text-slate-400 text-[10px] font-medium">
+                      Admitted: {new Date(p.admissionDate).toLocaleDateString()}
+                    </div>
                   </div>
-                  <div className="text-right flex-shrink-0 pl-2">
-                    <div className="text-red-500 dark:text-red-400 text-xs font-semibold">₹{p.balance?.toLocaleString()}</div>
-                    <div className="text-[10px] text-slate-400 dark:text-slate-500 uppercase font-medium">pending</div>
+                  <div className="text-right shrink-0">
+                    <div className="text-rose-500 font-extrabold text-xs">
+                      ₹{p.balance?.toLocaleString()}
+                    </div>
+                    <div className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">
+                      Pending
+                    </div>
                   </div>
                 </div>
               ))
@@ -113,55 +164,90 @@ export default function IPDDashboard() {
           </div>
         </div>
 
-        <div className="space-y-4">
-          {/* Revenue Overview */}
-          <div className="bg-white/50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-sm dark:shadow-none transition-colors duration-300">
-            <h3 className="text-slate-800 dark:text-white font-semibold text-sm mb-4 flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-slate-400 dark:text-slate-500" /> Revenue Overview
+        {/* Revenue & Discharges */}
+        <div className="space-y-5">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-[28px] p-5 shadow-xs">
+            <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-900 dark:text-white mb-3 pb-2 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-[#0f4a29] dark:text-[#52b788]" />{" "}
+              Revenue Overview
             </h3>
-            <div className="space-y-1">
+            <div className="space-y-2">
               {[
-                { label: "Total Deposits", val: `₹${totalDeposits.toLocaleString()}`, color: "text-emerald-600 dark:text-emerald-400" },
-                { label: "Total Cash",      val: `₹${totalCash.toLocaleString()}`,    color: "text-amber-600 dark:text-amber-400" },
-                { label: "Total UPI",       val: `₹${totalUpi.toLocaleString()}`,     color: "text-violet-600 dark:text-violet-400" },
-                { label: "Total Pending",   val: `₹${totalBalance.toLocaleString()}`, color: "text-red-500 dark:text-red-400" },
-              ].map(item => (
-                <div key={item.label} className="flex justify-between items-center py-2.5 border-b border-slate-100 dark:border-slate-800 last:border-0">
-                  <span className="text-slate-500 dark:text-slate-400 text-sm">{item.label}</span>
-                  <span className={`font-bold text-sm ${item.color}`}>{item.val}</span>
+                {
+                  label: "Total Deposits",
+                  val: `₹${totalDeposits.toLocaleString()}`,
+                  color: "text-[#0f4a29] dark:text-[#52b788]",
+                },
+                {
+                  label: "Total Cash",
+                  val: `₹${totalCash.toLocaleString()}`,
+                  color: "text-amber-600 dark:text-amber-400",
+                },
+                {
+                  label: "Total UPI",
+                  val: `₹${totalUpi.toLocaleString()}`,
+                  color: "text-[#0f4a29] dark:text-[#52b788]",
+                },
+                {
+                  label: "Total Pending",
+                  val: `₹${totalBalance.toLocaleString()}`,
+                  color: "text-rose-500",
+                },
+              ].map((item) => (
+                <div
+                  key={item.label}
+                  className="flex justify-between items-center py-2 border-b border-slate-100 dark:border-slate-800 last:border-0 text-xs"
+                >
+                  <span className="text-slate-500 font-medium">
+                    {item.label}
+                  </span>
+                  <span className={`font-extrabold ${item.color}`}>
+                    {item.val}
+                  </span>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Recent discharges */}
-          <div className="bg-white/50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-sm dark:shadow-none transition-colors duration-300">
-            <h3 className="text-slate-800 dark:text-white font-semibold text-sm mb-3 flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-slate-400 dark:text-slate-500" /> Recent Discharges
+          <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-[28px] p-5 shadow-xs">
+            <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-900 dark:text-white mb-3 pb-2 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-[#0f4a29] dark:text-[#52b788]" />{" "}
+              Recent Discharges
             </h3>
-            <div className="space-y-1">
+            <div className="space-y-2">
               {recentDischarges.length === 0 ? (
-                <p className="py-3 text-xs text-slate-400">No recent discharges found.</p>
+                <p className="py-4 text-xs text-slate-400 font-medium text-center">
+                  No recent discharges found.
+                </p>
               ) : (
-                recentDischarges.map(p => (
-                  <div key={p.id} className="flex items-center gap-3 py-2 border-b border-slate-100 dark:border-slate-800/60 last:border-0">
-                    <div className="w-7 h-7 rounded-full bg-emerald-50 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-xs font-bold border border-emerald-100 dark:border-transparent flex-shrink-0">
-                      {p.name[0]}
+                recentDischarges.map((p) => (
+                  <div
+                    key={p.id}
+                    className="flex items-center justify-between py-2 border-b border-slate-100 dark:border-slate-800/60 last:border-0 text-xs"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-7 h-7 rounded-full bg-[#0f4a29]/10 text-[#0f4a29] flex items-center justify-center font-extrabold text-xs shrink-0">
+                        {p.name[0]}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-slate-900 dark:text-white font-extrabold truncate">
+                          {p.name}
+                        </div>
+                        <div className="text-[#9ca3af] text-[10px]">
+                          Discharged:{" "}
+                          {p.dischargeDate
+                            ? new Date(p.dischargeDate).toLocaleDateString()
+                            : "—"}
+                        </div>
+                      </div>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-slate-800 dark:text-white text-xs font-medium truncate">{p.name}</div>
-                      <div className="text-slate-400 dark:text-slate-500 text-xs truncate">Discharged: {p.dischargeDate ? new Date(p.dischargeDate).toLocaleDateString() : "—"}</div>
-                    </div>
-                    <div className="flex-shrink-0">
-                      <StatusBadge status="Discharged" />
-                    </div>
+                    <StatusBadge status="Discharged" />
                   </div>
                 ))
               )}
             </div>
           </div>
         </div>
-      </div>
       </div>
     </div>
   );

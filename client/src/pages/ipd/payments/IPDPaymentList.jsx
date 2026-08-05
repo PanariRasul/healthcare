@@ -1,23 +1,37 @@
 // client/src/pages/ipd/IPDPaymentList.jsx
 import { useEffect, useState, useCallback } from "react";
-import { PageHeader, Pagination } from "../../../components/UI";
+import {
+  PageHeader,
+  Pagination,
+  TableCard,
+  Th,
+  Td,
+  SearchBar,
+} from "../../../components/UI";
 import { fetchPaymentSummary } from "./api/ipdPayment.api";
 import IPDPaymentModal from "./IPDPaymentModal";
-import { Search, IndianRupee, Wallet } from "lucide-react";
+import { IndianRupee, Wallet } from "lucide-react";
 
 const STATUS_OPTIONS = ["", "Pending", "Partially Paid", "Fully Paid"];
 
 const STATUS_STYLES = {
-  "Fully Paid": "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20",
-  "Partially Paid": "bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-500/20",
-  "Pending": "bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 border-red-200 dark:border-red-500/20",
+  "Fully Paid":
+    "bg-[#0f4a29]/10 text-[#0f4a29] dark:text-[#52b788] border-[#0f4a29]/20",
+  "Partially Paid": "bg-amber-50 text-amber-700 border-amber-200",
+  Pending: "bg-rose-50 text-rose-700 border-rose-200",
 };
 
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "-");
+const fmtDate = (d) =>
+  d
+    ? new Date(d).toLocaleDateString("en-IN", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      })
+    : "—";
 const fmtMoney = (n) => `₹${(n || 0).toLocaleString("en-IN")}`;
 
-// Order in which settlement statuses should appear: Pending -> Partially Paid -> Fully Paid
-const STATUS_ORDER = { "Pending": 0, "Partially Paid": 1, "Fully Paid": 2 };
+const STATUS_ORDER = { Pending: 0, "Partially Paid": 1, "Fully Paid": 2 };
 const sortByStatus = (list) =>
   [...list].sort((a, b) => {
     const oa = STATUS_ORDER[a.settlementStatus] ?? 99;
@@ -50,11 +64,10 @@ export default function IPDPaymentList() {
   }, [search, status]);
 
   useEffect(() => {
-    const t = setTimeout(load, 300); // light debounce on search typing
+    const t = setTimeout(load, 300);
     return () => clearTimeout(t);
   }, [load]);
 
-  // Reset to first page whenever the filtered/sorted data set changes
   useEffect(() => {
     setPage(1);
   }, [search, status]);
@@ -68,103 +81,145 @@ export default function IPDPaymentList() {
   };
 
   return (
-    <div>
-      <PageHeader title="IPD Payments" subtitle="Manage payments across all admitted patients" />
+    <div className="space-y-6 font-sans text-slate-900 bg-[#f4f5f7] dark:bg-slate-950 p-2 sm:p-4 rounded-3xl">
+      <PageHeader
+        title="IPD Payments Management"
+        subtitle="Track balances, record payments, and view settlement histories across admitted patients"
+      />
 
-      <div className="flex flex-col sm:flex-row gap-3 mb-4">
-        <div className="relative flex-1">
-          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by name or IPD serial number..."
-            className="w-full pl-9 pr-3 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-white focus:outline-none focus:border-teal-500 transition-colors"
-          />
+      {/* Search & Status Filter Bar */}
+      <div className="flex flex-col sm:flex-row gap-3 items-center justify-between">
+        <SearchBar
+          value={search}
+          onChange={setSearch}
+          placeholder="Search by name or IPD serial number..."
+        />
+
+        <div className="flex items-center gap-1.5 p-1 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-full shadow-2xs overflow-x-auto max-w-full">
+          {STATUS_OPTIONS.map((s) => {
+            const active = status === s;
+            return (
+              <button
+                key={s}
+                onClick={() => setStatus(s)}
+                className={`px-4 py-1.5 rounded-full text-xs font-extrabold transition-all whitespace-nowrap ${
+                  active
+                    ? "bg-[#0f4a29] text-white shadow-xs"
+                    : "text-slate-500 hover:text-slate-900 dark:text-slate-400"
+                }`}
+              >
+                {s || "All Statuses"}
+              </button>
+            );
+          })}
         </div>
-        <select
-          value={status}
-          onChange={(e) => setStatus(e.target.value)}
-          className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-800 dark:text-white focus:outline-none focus:border-teal-500 transition-colors"
-        >
-          {STATUS_OPTIONS.map((s) => (
-            <option key={s} value={s}>{s || "All Statuses"}</option>
-          ))}
-        </select>
       </div>
 
       {error && (
-        <div className="text-sm text-red-500 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-xl px-4 py-2.5 mb-4">
+        <div className="bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/30 rounded-2xl px-4 py-3 text-rose-600 dark:text-rose-400 text-xs font-bold">
           {error}
         </div>
       )}
 
-      <div className="bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-100 dark:border-slate-700 text-left text-slate-500 dark:text-slate-400">
-                <th className="px-4 py-3 font-medium">IPD No.</th>
-                <th className="px-4 py-3 font-medium">Patient Name</th>
-                <th className="px-4 py-3 font-medium">Admission Date</th>
-                <th className="px-4 py-3 font-medium text-right">Total Bill</th>
-                <th className="px-4 py-3 font-medium text-right">Paid</th>
-                <th className="px-4 py-3 font-medium text-right">Pending</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3 font-medium text-right">Action</th>
+      {/* Main Payment Directory Table */}
+      <TableCard>
+        <thead>
+          <tr>
+            <Th>IPD No.</Th>
+            <Th>Patient Name</Th>
+            <Th>Admission Date</Th>
+            <Th className="text-right">Total Bill</Th>
+            <Th className="text-right">Paid</Th>
+            <Th className="text-right">Pending</Th>
+            <Th>Status</Th>
+            <Th className="text-right">Action</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {loading ? (
+            <tr>
+              <td
+                colSpan={8}
+                className="px-5 py-8 text-center text-xs font-bold text-slate-400"
+              >
+                Loading payment records...
+              </td>
+            </tr>
+          ) : rows.length === 0 ? (
+            <tr>
+              <td
+                colSpan={8}
+                className="px-5 py-8 text-center text-xs font-bold text-slate-400"
+              >
+                No patients found matching your search.
+              </td>
+            </tr>
+          ) : (
+            pagedRows.map((p) => (
+              <tr
+                key={p.id}
+                className="border-t border-slate-100 dark:border-slate-800/60"
+              >
+                <Td className="font-mono text-xs font-bold text-[#0f4a29] dark:text-[#52b788]">
+                  #{p.serialNumber}
+                </Td>
+                <Td className="font-extrabold text-slate-900 dark:text-white">
+                  {p.name}
+                </Td>
+                <Td className="text-slate-500 font-medium">
+                  {fmtDate(p.admissionDate)}
+                </Td>
+                <Td className="text-right font-bold">
+                  {fmtMoney(p.totalStay)}
+                </Td>
+                <Td className="text-right text-[#0f4a29] dark:text-[#52b788] font-extrabold">
+                  {fmtMoney(p.totalPaid)}
+                </Td>
+                <Td className="text-right font-extrabold text-rose-500">
+                  {p.balance > 0 ? fmtMoney(p.balance) : "Cleared"}
+                </Td>
+                <Td>
+                  <span
+                    className={`inline-block text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border ${
+                      STATUS_STYLES[p.settlementStatus] || ""
+                    }`}
+                  >
+                    {p.settlementStatus}
+                  </span>
+                </Td>
+                <Td className="text-right">
+                  {p.balance > 0 ? (
+                    <button
+                      onClick={() => setActivePatientId(p.id)}
+                      className="inline-flex items-center gap-1.5 bg-[#0f4a29] hover:bg-[#165a34] text-white text-xs font-extrabold px-4 py-1.5 rounded-full shadow-xs transition-all"
+                    >
+                      <IndianRupee className="w-3.5 h-3.5" /> Pay Now
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => setActivePatientId(p.id)}
+                      className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-300 hover:text-[#0f4a29] text-xs font-bold px-3 py-1 rounded-full border border-slate-200 dark:border-slate-800 transition-colors"
+                    >
+                      <Wallet className="w-3.5 h-3.5 text-[#0f4a29] dark:text-[#52b788]" />{" "}
+                      History
+                    </button>
+                  )}
+                </Td>
               </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">Loading...</td></tr>
-              ) : rows.length === 0 ? (
-                <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">No patients found.</td></tr>
-              ) : (
-                pagedRows.map((p) => (
-                  <tr key={p.id} className="border-b border-slate-50 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
-                    <td className="px-4 py-3 font-mono font-semibold text-violet-600 dark:text-violet-400">{p.serialNumber}</td>
-                    <td className="px-4 py-3 text-slate-800 dark:text-white font-medium">{p.name}</td>
-                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{fmtDate(p.admissionDate)}</td>
-                    <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300">{fmtMoney(p.totalStay)}</td>
-                    <td className="px-4 py-3 text-right text-emerald-600 dark:text-emerald-400 font-medium">{fmtMoney(p.totalPaid)}</td>
-                    <td className="px-4 py-3 text-right text-red-500 dark:text-red-400 font-medium">{fmtMoney(p.balance)}</td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-block px-2.5 py-1 rounded-lg text-xs font-medium border ${STATUS_STYLES[p.settlementStatus] || ""}`}>
-                        {p.settlementStatus}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      {p.balance > 0 ? (
-                        <button
-                          onClick={() => setActivePatientId(p.id)}
-                          className="inline-flex items-center gap-1.5 bg-gradient-to-r from-violet-500 to-purple-400 text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:scale-[1.03] transition-transform"
-                        >
-                          <IndianRupee className="w-3.5 h-3.5" /> Pay Now
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => setActivePatientId(p.id)}
-                          className="inline-flex items-center gap-1.5 text-slate-500 dark:text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 text-xs font-medium px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 transition-colors"
-                        >
-                          <Wallet className="w-3.5 h-3.5" /> View History
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+            ))
+          )}
+        </tbody>
+      </TableCard>
 
       {!loading && rows.length > 0 && (
-        <div className="mt-4">
-          <Pagination current={page} total={totalPages} onPageChange={setPage} />
-        </div>
+        <Pagination current={page} total={totalPages} onPageChange={setPage} />
       )}
 
       {activePatientId && (
-        <IPDPaymentModal patientId={activePatientId} onClose={handleModalClosed} />
+        <IPDPaymentModal
+          patientId={activePatientId}
+          onClose={handleModalClosed}
+        />
       )}
     </div>
   );

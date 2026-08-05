@@ -2,47 +2,58 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  PageHeader, SearchBar, TableCard, Th, Td, ActionBtn,
-  DeleteModal, EmptyState, Pagination, StatusBadge,
+  PageHeader,
+  SearchBar,
+  TableCard,
+  Th,
+  Td,
+  ActionBtn,
+  DeleteModal,
+  EmptyState,
+  Pagination,
+  StatusBadge,
 } from "../../components/UI";
-import { fetchPatients, deletePatient as apiDeletePatient } from "./api/ipd.api";
+import {
+  fetchPatients,
+  deletePatient as apiDeletePatient,
+} from "./api/ipd.api";
 import IPDPatientForm from "./IPDPatientForm";
 import IPDPatientDetails from "./IPDPatientDetails";
-import { UserPlus, Search, Calendar, Clock, CreditCard, Paperclip, FileText } from "lucide-react";
+import InvoiceModal from "../../components/InvoiceModal";
+import { UserPlus, Search, Paperclip, FileText, Receipt } from "lucide-react";
 
 const PER_PAGE = 7;
 const LATEST_DOCS_SHOWN = 3;
 
 const settlementColors = {
-  "Pending":        "bg-red-50 dark:bg-red-500/15 text-red-700 dark:text-red-400 border-red-200 dark:border-red-500/20",
-  "Partially Paid": "bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/20",
-  "Fully Paid":     "bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20",
+  Pending: "bg-rose-50 text-rose-700 border-rose-200",
+  "Partially Paid": "bg-amber-50 text-amber-700 border-amber-200",
+  "Fully Paid": "bg-[#0f4a29]/10 text-[#0f4a29] border-[#0f4a29]/20",
 };
 
 const dischargeStatusColors = {
-  "Admitted":            "bg-blue-50 dark:bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-500/20",
-  "Ready For Discharge": "bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/20",
-  "Discharged":          "bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20",
+  Admitted: "bg-blue-50 text-blue-700 border-blue-200",
+  "Ready For Discharge": "bg-amber-50 text-amber-700 border-amber-200",
+  Discharged: "bg-[#0f4a29]/10 text-[#0f4a29] border-[#0f4a29]/20",
 };
 
-// backend stores dates as ISO datetimes -> show just the date/time parts
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString() : "—");
 
-// Documents come back from the API with a ready-to-use Cloudflare R2 url —
-// clicking one just opens that url in a new tab.
 function DocumentsCell({ documents = [] }) {
   const count = documents.length;
 
   if (count === 0) {
-    return <span className="text-xs text-slate-400 dark:text-slate-500">No Documents</span>;
+    return (
+      <span className="text-xs text-slate-400 font-medium">No Documents</span>
+    );
   }
 
   const latest = documents.slice(0, LATEST_DOCS_SHOWN);
 
   return (
-    <div className="min-w-[160px]">
-      <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border bg-violet-50 dark:bg-violet-500/15 text-violet-700 dark:text-violet-400 border-violet-200 dark:border-violet-500/20 mb-1.5">
-        <Paperclip className="w-3 h-3" /> Documents ({count})
+    <div className="min-w-[140px]">
+      <span className="inline-flex items-center gap-1 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border bg-slate-100 text-slate-700 border-slate-200 mb-1">
+        <Paperclip className="w-3 h-3" /> Docs ({count})
       </span>
       <div className="flex flex-col gap-0.5">
         {latest.map((doc) => (
@@ -52,10 +63,10 @@ function DocumentsCell({ documents = [] }) {
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
-            className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 truncate max-w-[180px] transition-colors"
+            className="flex items-center gap-1 text-[11px] font-medium text-slate-500 hover:text-[#0f4a29] truncate max-w-[160px]"
             title={doc.name}
           >
-            <FileText className="w-3 h-3 flex-shrink-0" />
+            <FileText className="w-3 h-3 shrink-0" />
             <span className="truncate">{doc.name}</span>
           </a>
         ))}
@@ -65,18 +76,19 @@ function DocumentsCell({ documents = [] }) {
 }
 
 export default function IPDPatientList({ readOnly = false }) {
-  const [patients, setPatients]         = useState([]);
-  const [totalPages, setTotalPages]     = useState(1);
-  const [totalCount, setTotalCount]     = useState(0);
-  const [loading, setLoading]           = useState(true);
-  const [error, setError]               = useState("");
+  const [patients, setPatients] = useState([]);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const [search, setSearch]             = useState("");
+  const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
-  const [page, setPage]                 = useState(1);
-  const [deleteId, setDeleteId]         = useState(null);
-  const [editing, setEditing]           = useState(null);
-  const [viewing, setViewing]           = useState(null);
+  const [page, setPage] = useState(1);
+  const [deleteId, setDeleteId] = useState(null);
+  const [editing, setEditing] = useState(null);
+  const [viewing, setViewing] = useState(null);
+  const [invoicing, setInvoicing] = useState(null);
   const navigate = useNavigate();
 
   const load = () => {
@@ -93,22 +105,30 @@ export default function IPDPatientList({ readOnly = false }) {
   };
 
   useEffect(() => {
-    const t = setTimeout(load, 250); // small debounce for search typing
+    const t = setTimeout(load, 250);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, statusFilter, page]);
 
   const handleDelete = (id) => {
     apiDeletePatient(id)
-      .then(() => { setDeleteId(null); load(); })
-      .catch((err) => { setError(err.message); setDeleteId(null); });
+      .then(() => {
+        setDeleteId(null);
+        load();
+      })
+      .catch((err) => {
+        setError(err.message);
+        setDeleteId(null);
+      });
   };
 
   if (editing) {
     return (
       <IPDPatientForm
         editPatient={editing}
-        onDone={() => { setEditing(null); load(); }}
+        onDone={() => {
+          setEditing(null);
+          load();
+        }}
       />
     );
   }
@@ -116,45 +136,54 @@ export default function IPDPatientList({ readOnly = false }) {
     return (
       <IPDPatientDetails
         patient={viewing}
-        onBack={() => { setViewing(null); load(); }}
+        onBack={() => {
+          setViewing(null);
+          load();
+        }}
         readOnly={readOnly}
       />
     );
   }
 
   return (
-    <div className="w-full px-2 sm:px-4 max-w-7xl mx-auto">
+    <div className="space-y-6 font-sans text-slate-900 bg-[#f4f5f7] dark:bg-slate-950 p-2 sm:p-4 rounded-3xl">
       <PageHeader
-        title="IPD Patients"
-        subtitle={`${totalCount} records`}
+        title="IPD Patients Directory"
+        subtitle={`Inpatient admissions and records (${totalCount} patients)`}
         action={
           !readOnly && (
             <button
               onClick={() => navigate("/ipd/admit")}
-              className="flex items-center gap-2 bg-gradient-to-r from-violet-500 to-purple-400 text-white text-sm font-semibold px-4 py-2.5 rounded-xl hover:scale-[1.02] transition-transform shadow-lg shadow-violet-500/20"
+              className="flex items-center gap-2 bg-[#0f4a29] hover:bg-[#165a34] text-white text-xs font-extrabold px-5 py-2.5 rounded-full transition-all shadow-xs"
             >
               <UserPlus className="w-4 h-4" />
-              <span className="hidden sm:inline">Admit Patient</span>
-              <span className="sm:hidden">Admit</span>
+              <span>Admit Patient</span>
             </button>
           )
         }
       />
 
-      {/* Filters */}
-      <div className="flex flex-col gap-3 mb-4 md:flex-row md:items-center">
-        <div className="flex-1">
-          <SearchBar value={search} onChange={s => { setSearch(s); setPage(1); }} placeholder="Search by name or IPD no..." />
-        </div>
-        <div className="flex gap-2 overflow-x-auto pb-1 md:pb-0 scrollbar-none">
-          {["", "Admitted", "Discharged"].map(s => (
+      <div className="flex flex-col gap-3 md:flex-row md:items-center justify-between">
+        <SearchBar
+          value={search}
+          onChange={(s) => {
+            setSearch(s);
+            setPage(1);
+          }}
+          placeholder="Search patient or IPD no..."
+        />
+        <div className="flex gap-1.5 p-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-full shadow-2xs">
+          {["", "Admitted", "Discharged"].map((s) => (
             <button
               key={s}
-              onClick={() => { setStatusFilter(s); setPage(1); }}
-              className={`px-3 py-2 rounded-xl text-xs font-medium transition-colors border whitespace-nowrap ${
+              onClick={() => {
+                setStatusFilter(s);
+                setPage(1);
+              }}
+              className={`px-4 py-1.5 rounded-full text-xs font-extrabold transition-all ${
                 statusFilter === s
-                  ? "bg-violet-50 dark:bg-violet-500/20 text-violet-700 dark:text-violet-400 border-violet-200 dark:border-violet-500/30"
-                  : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700"
+                  ? "bg-[#0f4a29] text-white shadow-xs"
+                  : "text-slate-500 hover:text-slate-900"
               }`}
             >
               {s || "All Status"}
@@ -164,185 +193,118 @@ export default function IPDPatientList({ readOnly = false }) {
       </div>
 
       {error && (
-        <div className="mb-4 text-sm text-red-500 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-xl px-4 py-2.5">
+        <div className="bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/30 rounded-2xl px-4 py-3 text-rose-600 dark:text-rose-400 text-xs font-bold">
           {error}
         </div>
       )}
 
       {loading ? (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center text-sm text-slate-400">
-          Loading patients…
+        <div className="p-12 text-center text-xs text-slate-400 font-bold">
+          Loading patient directory...
         </div>
       ) : patients.length === 0 ? (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8">
-          <EmptyState icon={Search} message="No patients found" />
-        </div>
+        <EmptyState icon={Search} message="No inpatient records found." />
       ) : (
-        <>
-          {/* DESKTOP */}
-          <div className="hidden xl:block">
-            <TableCard>
-              <thead>
-                <tr>
-                  <Th>IPD No.</Th><Th>Patient</Th><Th>Admission</Th><Th>Time</Th>
-                  <Th>Total Bill</Th><Th>Paid</Th><Th>Pending</Th>
-                  <Th>Settlement</Th><Th>Discharge</Th><Th>Documents</Th>
-                  {!readOnly && <Th>Actions</Th>}
-                </tr>
-              </thead>
-              <tbody>
-                {patients.map(p => (
-                  <tr key={p.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
-                    <Td><span className="font-mono text-xs text-violet-600 dark:text-violet-400 font-bold">{p.serialNumber || "—"}</span></Td>
-                    <Td>
-                      <button onClick={() => setViewing(p)} className="flex items-center gap-2.5 hover:opacity-80 transition-opacity">
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border flex-shrink-0 ${
-                          p.status === "Admitted"
-                            ? "bg-violet-50 dark:bg-violet-500/20 text-violet-600 dark:text-violet-400 border-violet-100 dark:border-transparent"
-                            : "bg-emerald-50 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-100 dark:border-transparent"
-                        }`}>
-                          {p.name[0]}
-                        </div>
-                        <span className="text-slate-800 dark:text-white font-medium whitespace-nowrap">{p.name}</span>
-                      </button>
-                    </Td>
-                    <Td><span className="text-slate-500 dark:text-slate-400">{fmtDate(p.admissionDate)}</span></Td>
-                    <Td><span className="text-slate-500 dark:text-slate-400">{p.admissionTime}</span></Td>
-                    <Td><span className="text-slate-700 dark:text-slate-300 font-medium">₹{p.totalStay?.toLocaleString()}</span></Td>
-                    <Td><span className="text-emerald-600 dark:text-emerald-400 font-medium">₹{p.totalPaid?.toLocaleString()}</span></Td>
-                    <Td>
-                      {p.balance > 0
-                        ? <span className="text-red-500 dark:text-red-400 font-medium">₹{p.balance?.toLocaleString()}</span>
-                        : <span className="text-emerald-600 dark:text-emerald-400 text-xs font-semibold">Cleared</span>}
-                    </Td>
-                    <Td>
-                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border whitespace-nowrap ${settlementColors[p.settlementStatus] || settlementColors["Pending"]}`}>
-                        {p.settlementStatus || "Pending"}
-                      </span>
-                    </Td>
-                    <Td>
-                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border whitespace-nowrap ${dischargeStatusColors[p.dischargeStatus] || dischargeStatusColors["Admitted"]}`}>
-                        {p.dischargeStatus || "Admitted"}
-                      </span>
-                    </Td>
-                    <Td>
-                      <DocumentsCell documents={p.documents} />
-                    </Td>
-                    {!readOnly && (
-                      <Td>
-                        <div className="flex gap-1">
-                          <ActionBtn type="view"   onClick={() => setViewing(p)} />
-                          <ActionBtn type="edit"   onClick={() => setEditing(p)} />
-                          <ActionBtn type="delete" onClick={() => setDeleteId(p.id)} />
-                        </div>
-                      </Td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </TableCard>
-          </div>
-
-          {/* MOBILE */}
-          <div className="block xl:hidden space-y-3.5">
-            {patients.map(p => (
-              <div key={p.id} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-sm">
-                <div className="flex justify-between items-start border-b border-slate-100 dark:border-slate-800 pb-3 mb-3">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <button onClick={() => setViewing(p)} className="flex-shrink-0">
-                      <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm border ${
-                        p.status === "Admitted"
-                          ? "bg-violet-50 dark:bg-violet-500/20 text-violet-600 dark:text-violet-400 border-violet-100 dark:border-transparent"
-                          : "bg-emerald-50 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-100 dark:border-transparent"
-                      }`}>
-                        {p.name[0]}
-                      </div>
-                    </button>
-                    <div className="min-w-0">
-                      <h4 className="text-slate-800 dark:text-white font-semibold text-sm truncate">{p.name}</h4>
-                      <p className="text-xs text-violet-600 dark:text-violet-400 font-mono font-bold mt-0.5">
-                        IPD No: {p.serialNumber || "—"}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex flex-col gap-1 items-end flex-shrink-0 pl-1">
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap ${dischargeStatusColors[p.dischargeStatus] || dischargeStatusColors["Admitted"]}`}>
-                      {p.dischargeStatus || "Admitted"}
+        <TableCard>
+          <thead>
+            <tr>
+              <Th>IPD No.</Th>
+              <Th>Patient</Th>
+              <Th>Admission</Th>
+              <Th>Total Bill</Th>
+              <Th>Paid</Th>
+              <Th>Pending</Th>
+              <Th>Discharge</Th>
+              <Th>Documents</Th>
+              {!readOnly && <Th>Actions</Th>}
+            </tr>
+          </thead>
+          <tbody>
+            {patients.map((p) => (
+              <tr
+                key={p.id}
+                className="border-t border-slate-100 dark:border-slate-800/60"
+              >
+                <Td>
+                  <span className="font-mono text-xs text-[#0f4a29] dark:text-[#52b788] font-extrabold">
+                    #{p.serialNumber || "—"}
+                  </span>
+                </Td>
+                <Td>
+                  <button
+                    onClick={() => setViewing(p)}
+                    className="text-left font-extrabold text-slate-900 dark:text-white hover:underline"
+                  >
+                    {p.name}
+                  </button>
+                </Td>
+                <Td>{fmtDate(p.admissionDate)}</Td>
+                <Td className="font-bold">₹{p.totalStay?.toLocaleString()}</Td>
+                <Td className="text-[#0f4a29] dark:text-[#52b788] font-bold">
+                  ₹{p.totalPaid?.toLocaleString()}
+                </Td>
+                <Td>
+                  {p.balance > 0 ? (
+                    <span className="text-rose-500 font-extrabold">
+                      ₹{p.balance?.toLocaleString()}
                     </span>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 text-xs text-slate-500 dark:text-slate-400 mb-3 bg-slate-50/50 dark:bg-slate-800/20 p-2 rounded-xl border border-slate-100 dark:border-slate-800/50">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <Calendar className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-                    <span className="truncate">Adm: {fmtDate(p.admissionDate)}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <Clock className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-                    <span className="truncate">Time: {p.admissionTime}</span>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs border-b border-slate-100 dark:border-slate-800 pb-3 mb-3">
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-400">Initial Deposit:</span>
-                    <span className="font-medium text-blue-600 dark:text-blue-400">₹{p.deposit || 0}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-400">Total Paid:</span>
-                    <span className="font-medium text-emerald-600 dark:text-emerald-400">₹{p.totalPaid || 0}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-400">Settlement:</span>
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${settlementColors[p.settlementStatus] || settlementColors["Pending"]}`}>
-                      {p.settlementStatus || "Pending"}
+                  ) : (
+                    <span className="text-[#0f4a29] font-bold text-xs">
+                      Cleared
                     </span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-400 font-semibold">Net Balance:</span>
-                    {p.balance > 0 ? (
-                      <span className="font-bold text-red-500">₹{p.balance?.toLocaleString()}</span>
-                    ) : (
-                      <span className="text-emerald-600 dark:text-emerald-400 font-bold text-xs">Cleared</span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Documents */}
-                <div className="border-b border-slate-100 dark:border-slate-800 pb-3 mb-3">
-                  <DocumentsCell documents={p.documents} />
-                </div>
-
-                <div className="flex justify-between items-center">
-                  <div className="flex gap-1 items-center max-w-[60%] flex-wrap">
-                    {p.cash > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-100 dark:border-transparent">Cash</span>}
-                    {p.upi > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-purple-50 dark:bg-purple-500/10 text-purple-700 dark:text-purple-400 border border-purple-100 dark:border-transparent">UPI</span>}
-                    {p.card > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-100 dark:border-transparent">Card</span>}
-                  </div>
-                  {!readOnly && (
-                    <div className="flex gap-1 flex-shrink-0">
-                      <ActionBtn type="view"   onClick={() => setViewing(p)} />
-                      <ActionBtn type="edit"   onClick={() => setEditing(p)} />
-                      <ActionBtn type="delete" onClick={() => setDeleteId(p.id)} />
-                    </div>
                   )}
-                </div>
-              </div>
+                </Td>
+                <Td>
+                  <span
+                    className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border ${dischargeStatusColors[p.dischargeStatus] || dischargeStatusColors["Admitted"]}`}
+                  >
+                    {p.dischargeStatus || "Admitted"}
+                  </span>
+                </Td>
+                <Td>
+                  <DocumentsCell documents={p.documents} />
+                </Td>
+                {!readOnly && (
+                  <Td>
+                    <div className="flex gap-1">
+                      <ActionBtn type="view" onClick={() => setViewing(p)} />
+                      <ActionBtn type="edit" onClick={() => setEditing(p)} />
+                      <ActionBtn
+                        type="delete"
+                        onClick={() => setDeleteId(p.id)}
+                      />
+                      <button
+                        onClick={() => setInvoicing(p)}
+                        title="Generate Invoice"
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-[#0f4a29] hover:bg-[#0f4a29]/10 transition-colors"
+                      >
+                        <Receipt className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </Td>
+                )}
+              </tr>
             ))}
-          </div>
-        </>
+          </tbody>
+        </TableCard>
       )}
 
-      <div className="mt-4">
-        <Pagination current={page} total={totalPages} onPageChange={setPage} />
-      </div>
-        {/* ipd deleting */}
+      <Pagination current={page} total={totalPages} onPageChange={setPage} />
+
       {deleteId && (
         <DeleteModal
-          name={patients.find(p => p.id === deleteId)?.name}
+          name={patients.find((p) => p.id === deleteId)?.name}
           onConfirm={() => handleDelete(deleteId)}
           onCancel={() => setDeleteId(null)}
-        />  
+        />
+      )}
+
+      {invoicing && (
+        <InvoiceModal
+          type="IPD"
+          patient={invoicing}
+          onClose={() => setInvoicing(null)}
+        />
       )}
     </div>
   );

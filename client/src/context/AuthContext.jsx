@@ -24,7 +24,8 @@ export function AuthProvider({ children }) {
         });
         if (!res.ok) throw new Error("Session expired");
         const data = await res.json();
-        const savedModule = localStorage.getItem("hms_module") || data.user.modules[0];
+        const savedModule =
+          localStorage.getItem("hms_module") || data.user.modules[0];
         setUser({
           ...data.user,
           role: data.user.role.toLowerCase(),
@@ -56,7 +57,10 @@ export function AuthProvider({ children }) {
       const data = await res.json();
 
       if (!res.ok) {
-        return { success: false, error: data.message || "Invalid credentials." };
+        return {
+          success: false,
+          error: data.message || "Invalid credentials.",
+        };
       }
 
       const { token: newToken, user: fetchedUser } = data;
@@ -77,7 +81,10 @@ export function AuthProvider({ children }) {
         module: resolvedModule === "PHARMACY" ? "Pharmacy" : resolvedModule,
       };
     } catch (err) {
-      return { success: false, error: "Could not reach the server. Please try again." };
+      return {
+        success: false,
+        error: "Could not reach the server. Please try again.",
+      };
     }
   };
 
@@ -112,7 +119,9 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, setAuth, initializing }}>
+    <AuthContext.Provider
+      value={{ user, login, logout, setAuth, initializing }}
+    >
       {children}
     </AuthContext.Provider>
   );

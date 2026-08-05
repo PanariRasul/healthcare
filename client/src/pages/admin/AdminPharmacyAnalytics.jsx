@@ -1,14 +1,17 @@
 // client/src/pages/admin/AdminPharmacyAnalytics.jsx
-// Read-only pharmacy analytics for Admin. Deliberately does NOT reuse
-// PharmacyMedicineList/Form — those routes are gated to role="pharmacy" and
-// admin has no reason to edit stock directly; this page is overview-only.
 import { useState, useEffect } from "react";
 import { PageHeader, StatCard } from "../../components/UI";
-import { PharmacyStatusBadge, getMedicineStatus } from "../pharmacy/PharmacyDashboard";
 import { api } from "../../lib/api";
 import {
-  Pill, Package, AlertTriangle, XCircle, TrendingUp, TrendingDown,
-  Clock, DollarSign, Boxes, RefreshCw, Loader2,
+  Pill,
+  Package,
+  AlertTriangle,
+  Boxes,
+  Loader2,
+  TrendingUp,
+  TrendingDown,
+  RefreshCw,
+  Clock,
 } from "lucide-react";
 
 export default function AdminPharmacyAnalytics() {
@@ -39,8 +42,9 @@ export default function AdminPharmacyAnalytics() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-24">
-        <div className="flex items-center gap-3 text-slate-400 dark:text-slate-500 text-sm font-medium">
-          <Loader2 className="w-5 h-5 animate-spin" /> Loading pharmacy analytics...
+        <div className="flex items-center gap-3 text-slate-400 dark:text-slate-500 text-xs font-bold">
+          <Loader2 className="w-5 h-5 animate-spin text-[#0f4a29]" /> Loading
+          pharmacy analytics...
         </div>
       </div>
     );
@@ -48,17 +52,18 @@ export default function AdminPharmacyAnalytics() {
 
   if (error) {
     return (
-      <div className="w-full px-2 sm:px-4 max-w-7xl mx-auto">
-        <PageHeader title="Pharmacy Analytics" subtitle="Inventory overview across the pharmacy module" />
-        <div className="bg-rose-50 dark:bg-rose-950/20 border border-rose-100 dark:border-rose-900/30 rounded-xl px-4 py-3 text-rose-600 dark:text-rose-400 text-sm font-medium">
+      <div className="space-y-6 font-sans text-slate-900 bg-[#f4f5f7] dark:bg-slate-950 p-2 sm:p-4 rounded-3xl">
+        <PageHeader
+          title="Pharmacy Analytics"
+          subtitle="Inventory overview across the pharmacy module"
+        />
+        <div className="bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/30 rounded-2xl px-4 py-3 text-rose-600 dark:text-rose-400 text-xs font-bold">
           {error}
         </div>
       </div>
     );
   }
 
-  // Category breakdown (top 6 by medicine count) — computed client-side from
-  // the full medicine list since /stats doesn't return a per-category split.
   const categoryCounts = medicines.reduce((acc, m) => {
     acc[m.category] = (acc[m.category] || 0) + 1;
     return acc;
@@ -68,26 +73,34 @@ export default function AdminPharmacyAnalytics() {
     .slice(0, 6);
   const maxCategoryCount = topCategories[0]?.[1] || 1;
 
-  // Recent stock transactions across ALL medicines, most-recent-first —
-  // same flatten pattern as PharmacyStockHistory.jsx, just capped to 8 rows.
   const recentHistory = medicines
-    .flatMap(m => (m.stockHistory || []).map(h => ({ ...h, drugName: m.drugName, batchNumber: m.batchNumber, medicineId: m.id })))
+    .flatMap((m) =>
+      (m.stockHistory || []).map((h) => ({
+        ...h,
+        drugName: m.drugName,
+        batchNumber: m.batchNumber,
+        medicineId: m.id,
+      })),
+    )
     .sort((a, b) => new Date(b.date) - new Date(a.date))
     .slice(0, 8);
 
   const totalStockUnits = medicines.reduce((s, m) => s + m.quantity, 0);
 
   return (
-    <div className="w-full px-2 sm:px-4 max-w-7xl mx-auto">
-      <PageHeader title="Pharmacy Analytics" subtitle="Inventory overview across the pharmacy module" />
+    <div className="space-y-6 font-sans text-slate-900 bg-[#f4f5f7] dark:bg-slate-950 p-2 sm:p-4 rounded-3xl">
+      <PageHeader
+        title="Pharmacy Analytics"
+        subtitle="Inventory overview, stock movement, and valuation metrics"
+      />
 
-      {/* Top stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
+      {/* Top Stats Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           label="Total Medicines"
           value={stats.totalMedicines}
           icon={Pill}
-          color="teal"
+          color="green"
           sub={`${stats.totalCategories} categories`}
         />
         <StatCard
@@ -113,38 +126,61 @@ export default function AdminPharmacyAnalytics() {
         />
       </div>
 
-      {/* Financials */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+      {/* Financial Valuation Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {[
-          { label: "Purchase Value (Stock on Hand)", val: `₹${stats.totalPurchaseValue.toLocaleString()}`, color: "text-blue-600 dark:text-blue-400", bg: "bg-blue-50 dark:bg-blue-500/10 border-blue-200 dark:border-blue-500/20" },
-          { label: "Selling Value (Stock on Hand)",  val: `₹${stats.totalSellingValue.toLocaleString()}`,  color: "text-emerald-600 dark:text-emerald-400", bg: "bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20" },
-          { label: "Potential Profit",               val: `₹${stats.potentialProfit.toLocaleString()}`,   color: "text-violet-600 dark:text-violet-400", bg: "bg-violet-50 dark:bg-violet-500/10 border-violet-200 dark:border-violet-500/20" },
-        ].map(item => (
-          <div key={item.label} className={`${item.bg} border rounded-2xl p-4 text-center shadow-sm dark:shadow-none`}>
-            <div className={`font-bold text-xl ${item.color}`}>{item.val}</div>
-            <div className="text-slate-500 dark:text-slate-400 text-xs sm:text-sm mt-0.5">{item.label}</div>
+          {
+            label: "Purchase Value (Stock on Hand)",
+            val: `₹${stats.totalPurchaseValue.toLocaleString()}`,
+          },
+          {
+            label: "Selling Value (Stock on Hand)",
+            val: `₹${stats.totalSellingValue.toLocaleString()}`,
+          },
+          {
+            label: "Potential Profit",
+            val: `₹${stats.potentialProfit.toLocaleString()}`,
+          },
+        ].map((item) => (
+          <div
+            key={item.label}
+            className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-[24px] p-5 shadow-xs text-center"
+          >
+            <div className="font-extrabold text-2xl text-[#0f4a29] dark:text-[#52b788]">
+              {item.val}
+            </div>
+            <div className="text-slate-500 dark:text-slate-400 text-xs font-bold mt-1">
+              {item.label}
+            </div>
           </div>
         ))}
       </div>
 
-      {/* Alerts row: Low Stock + Expiring Soon (top 5 each, from /stats) */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-        <div className="bg-amber-50/50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-2xl p-4 sm:p-5">
-          <h3 className="text-amber-800 dark:text-amber-400 font-semibold text-sm flex items-center gap-2 mb-3">
-            <Package className="w-4 h-4" /> Low Stock <span className="text-slate-400 dark:text-slate-500 font-normal">({stats.lowStockCount})</span>
+      {/* Low Stock & Expiring Alerts */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-[28px] p-5 shadow-xs">
+          <h3 className="text-amber-700 dark:text-amber-400 font-extrabold text-xs uppercase tracking-wider flex items-center gap-2 mb-4">
+            <Package className="w-4 h-4" /> Low Stock ({stats.lowStockCount})
           </h3>
           {stats.lowStockItems.length === 0 ? (
-            <p className="text-amber-600/70 dark:text-amber-400/50 text-xs">Nothing running low</p>
+            <p className="text-slate-400 text-xs py-8 text-center font-medium">
+              Nothing running low.
+            </p>
           ) : (
-            <div className="space-y-2">
-              {stats.lowStockItems.map(m => (
-                <div key={m.id} className="flex items-center gap-2 text-xs">
-                  <div className="w-6 h-6 rounded-full bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 flex items-center justify-center font-bold text-[10px] flex-shrink-0">
+            <div className="space-y-2.5">
+              {stats.lowStockItems.map((m) => (
+                <div
+                  key={m.id}
+                  className="flex items-center gap-2.5 text-xs py-1.5 border-b border-slate-100 dark:border-slate-800/60 last:border-0"
+                >
+                  <div className="w-7 h-7 rounded-full bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 flex items-center justify-center font-bold text-xs shrink-0">
                     {m.drugName[0]}
                   </div>
-                  <span className="text-slate-700 dark:text-slate-300 font-medium truncate">{m.drugName}</span>
-                  <span className="text-amber-600 dark:text-amber-400 ml-auto flex-shrink-0">
-                    {m.quantity} left (reorder at {m.reorderLevel})
+                  <span className="text-slate-800 dark:text-white font-bold truncate">
+                    {m.drugName}
+                  </span>
+                  <span className="text-amber-600 font-extrabold text-[11px] ml-auto shrink-0">
+                    {m.quantity} left
                   </span>
                 </div>
               ))}
@@ -152,21 +188,31 @@ export default function AdminPharmacyAnalytics() {
           )}
         </div>
 
-        <div className="bg-violet-50/50 dark:bg-violet-500/10 border border-violet-200 dark:border-violet-500/20 rounded-2xl p-4 sm:p-5">
-          <h3 className="text-violet-800 dark:text-violet-400 font-semibold text-sm flex items-center gap-2 mb-3">
-            <Clock className="w-4 h-4" /> Expiring Soon <span className="text-slate-400 dark:text-slate-500 font-normal">({stats.expiringSoonCount})</span>
+        <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-[28px] p-5 shadow-xs">
+          <h3 className="text-rose-600 dark:text-rose-400 font-extrabold text-xs uppercase tracking-wider flex items-center gap-2 mb-4">
+            <Clock className="w-4 h-4" /> Expiring Soon (
+            {stats.expiringSoonCount})
           </h3>
           {stats.expiringSoonItems.length === 0 ? (
-            <p className="text-violet-600/70 dark:text-violet-400/50 text-xs">Nothing expiring within 30 days</p>
+            <p className="text-slate-400 text-xs py-8 text-center font-medium">
+              Nothing expiring within 30 days.
+            </p>
           ) : (
-            <div className="space-y-2">
-              {stats.expiringSoonItems.map(m => (
-                <div key={m.id} className="flex items-center gap-2 text-xs">
-                  <div className="w-6 h-6 rounded-full bg-violet-100 dark:bg-violet-500/20 text-violet-700 dark:text-violet-400 flex items-center justify-center font-bold text-[10px] flex-shrink-0">
+            <div className="space-y-2.5">
+              {stats.expiringSoonItems.map((m) => (
+                <div
+                  key={m.id}
+                  className="flex items-center gap-2.5 text-xs py-1.5 border-b border-slate-100 dark:border-slate-800/60 last:border-0"
+                >
+                  <div className="w-7 h-7 rounded-full bg-rose-50 text-rose-600 dark:bg-rose-950/40 dark:text-rose-400 flex items-center justify-center font-bold text-xs shrink-0">
                     {m.drugName[0]}
                   </div>
-                  <span className="text-slate-700 dark:text-slate-300 font-medium truncate">{m.drugName}</span>
-                  <span className="text-violet-500 dark:text-violet-400 ml-auto flex-shrink-0">{m.expiryDate}</span>
+                  <span className="text-slate-800 dark:text-white font-bold truncate">
+                    {m.drugName}
+                  </span>
+                  <span className="text-rose-500 font-extrabold text-[11px] ml-auto shrink-0">
+                    {m.expiryDate}
+                  </span>
                 </div>
               ))}
             </div>
@@ -174,25 +220,32 @@ export default function AdminPharmacyAnalytics() {
         </div>
       </div>
 
-      {/* Category breakdown + Recent stock activity */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-        <div className="bg-white/50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm dark:shadow-none">
-          <h3 className="text-slate-800 dark:text-white font-semibold text-sm mb-4 flex items-center gap-2">
-            <Boxes className="w-4 h-4 text-slate-400 dark:text-slate-500" /> Top Categories
+      {/* Top Categories & Recent Stock Movement Table */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-[28px] p-5 shadow-xs">
+          <h3 className="text-slate-900 dark:text-white font-extrabold text-xs uppercase tracking-wider mb-4 flex items-center gap-2">
+            <Boxes className="w-4 h-4 text-[#0f4a29] dark:text-[#52b788]" /> Top
+            Categories
           </h3>
           {topCategories.length === 0 ? (
-            <p className="text-slate-400 dark:text-slate-500 text-xs">No medicines yet</p>
+            <p className="text-slate-400 text-xs py-8 text-center font-medium">
+              No medicines yet.
+            </p>
           ) : (
             <div className="space-y-3">
               {topCategories.map(([name, count]) => (
                 <div key={name}>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="text-slate-500 dark:text-slate-400 truncate">{name}</span>
-                    <span className="text-slate-800 dark:text-white font-medium flex-shrink-0 ml-2">{count}</span>
+                  <div className="flex justify-between text-xs mb-1 font-bold">
+                    <span className="text-slate-600 dark:text-slate-400 truncate">
+                      {name}
+                    </span>
+                    <span className="text-slate-900 dark:text-white shrink-0 ml-2">
+                      {count}
+                    </span>
                   </div>
                   <div className="h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
                     <div
-                      className="h-full bg-teal-400 rounded-full transition-all duration-700"
+                      className="h-full bg-[#0f4a29] dark:bg-[#52b788] rounded-full transition-all duration-700"
                       style={{ width: `${(count / maxCategoryCount) * 100}%` }}
                     />
                   </div>
@@ -202,49 +255,68 @@ export default function AdminPharmacyAnalytics() {
           )}
         </div>
 
-        <div className="bg-white/50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-sm dark:shadow-none lg:col-span-2">
-          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800">
-            <h3 className="text-slate-800 dark:text-white font-semibold text-sm flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-slate-400 dark:text-slate-500" /> Recent Stock Activity
-            </h3>
-          </div>
+        <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-[28px] p-5 shadow-xs lg:col-span-2 overflow-hidden">
+          <h3 className="text-slate-900 dark:text-white font-extrabold text-xs uppercase tracking-wider mb-4 flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-[#0f4a29] dark:text-[#52b788]" />{" "}
+            Recent Stock Activity
+          </h3>
           {recentHistory.length === 0 ? (
-            <div className="px-5 py-10 text-center text-slate-400 dark:text-slate-500 text-sm">No stock transactions yet</div>
+            <div className="p-8 text-center text-slate-400 text-xs font-medium">
+              No stock transactions recorded yet.
+            </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm min-w-[480px]">
+              <table className="w-full text-xs min-w-[480px]">
                 <thead>
-                  <tr className="bg-slate-50 dark:bg-slate-900/50">
-                    {["Date", "Medicine", "Action", "Qty", "Reason"].map(h => (
-                      <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-slate-500 dark:text-slate-500 uppercase tracking-wider">
-                        {h}
-                      </th>
-                    ))}
+                  <tr className="border-b border-slate-100 dark:border-slate-800/80">
+                    {["Date", "Medicine", "Action", "Qty", "Reason"].map(
+                      (h) => (
+                        <th
+                          key={h}
+                          className="text-left py-2.5 px-2 text-[10px] font-extrabold text-slate-400 uppercase tracking-wider"
+                        >
+                          {h}
+                        </th>
+                      ),
+                    )}
                   </tr>
                 </thead>
                 <tbody>
                   {recentHistory.map((h, idx) => (
-                    <tr key={`${h.medicineId}-${h.id}-${idx}`} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors border-t border-slate-100 dark:border-slate-800/50">
-                      <td className="px-5 py-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">{h.date}</td>
-                      <td className="px-5 py-3 text-slate-800 dark:text-white font-medium truncate">{h.drugName}</td>
-                      <td className="px-5 py-3">
-                        <span className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full border w-fit whitespace-nowrap ${
-                          h.action === "Add Stock"
-                            ? "bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20"
-                            : h.action === "Reduce Stock"
-                            ? "bg-red-50 dark:bg-red-500/15 text-red-700 dark:text-red-400 border-red-200 dark:border-red-500/20"
-                            : "bg-violet-50 dark:bg-violet-500/15 text-violet-700 dark:text-violet-400 border-violet-200 dark:border-violet-500/20"
-                        }`}>
-                          {h.action === "Add Stock" ? <TrendingUp className="w-3 h-3" /> : h.action === "Reduce Stock" ? <TrendingDown className="w-3 h-3" /> : <RefreshCw className="w-3 h-3" />}
+                    <tr
+                      key={`${h.medicineId}-${h.id}-${idx}`}
+                      className="border-t border-slate-100 dark:border-slate-800/60"
+                    >
+                      <td className="py-2.5 px-2 text-slate-400 font-medium whitespace-nowrap">
+                        {h.date}
+                      </td>
+                      <td className="py-2.5 px-2 font-extrabold text-slate-800 dark:text-white truncate">
+                        {h.drugName}
+                      </td>
+                      <td className="py-2.5 px-2">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                          {h.action === "Add Stock" ? (
+                            <TrendingUp className="w-3 h-3 text-[#0f4a29] dark:text-[#52b788]" />
+                          ) : (
+                            <TrendingDown className="w-3 h-3 text-rose-500" />
+                          )}
                           {h.action}
                         </span>
                       </td>
-                      <td className="px-5 py-3 whitespace-nowrap">
-                        <span className={`font-bold ${h.quantity > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500 dark:text-red-400'}`}>
+                      <td className="py-2.5 px-2 font-extrabold">
+                        <span
+                          className={
+                            h.quantity > 0
+                              ? "text-[#0f4a29] dark:text-[#52b788]"
+                              : "text-rose-500"
+                          }
+                        >
                           {h.quantity > 0 ? `+${h.quantity}` : h.quantity}
                         </span>
                       </td>
-                      <td className="px-5 py-3 text-slate-500 dark:text-slate-400 truncate max-w-[200px]">{h.reason}</td>
+                      <td className="py-2.5 px-2 text-slate-400 font-medium truncate max-w-[180px]">
+                        {h.reason || "—"}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

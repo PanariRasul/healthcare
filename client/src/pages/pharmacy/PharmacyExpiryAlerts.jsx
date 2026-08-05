@@ -95,7 +95,8 @@ export default function PharmacyExpiryAlerts() {
             <span>
               Stock:{" "}
               <span className="font-bold text-slate-800 dark:text-white">
-                {med.quantity} units
+                {med.availableBoxes} Box, {med.availableSheets} Sheet,{" "}
+                {med.availableTablets} Tablet
               </span>
             </span>
           </div>

@@ -16,6 +16,7 @@ import { PharmacyStatusBadge, getMedicineStatus } from "./PharmacyDashboard";
 import PharmacyMedicineDetails from "./PharmacyMedicineDetails";
 import { Plus, Search, Loader2 } from "lucide-react";
 import { api } from "../../lib/api";
+import { useAuth } from "../../context/AuthContext";
 
 const PER_PAGE = 8;
 const STATUS_FILTERS = [
@@ -38,6 +39,9 @@ export default function PharmacyMedicineList() {
   const [deleteId, setDeleteId] = useState(null);
   const [viewing, setViewing] = useState(null);
   const navigate = useNavigate();
+  const { user } = useAuth();
+  // Admin uses /admin/pharmacy/*, the Pharmacy role uses /pharmacy/*.
+  const base = user?.role === "admin" ? "/admin/pharmacy" : "/pharmacy";
 
   const fetchMedicines = async () => {
     setLoading(true);
@@ -103,7 +107,7 @@ export default function PharmacyMedicineList() {
         subtitle={`Pharmacy inventory records (${filtered.length} drugs listed)`}
         action={
           <button
-            onClick={() => navigate("/pharmacy/add")}
+            onClick={() => navigate(`${base}/add`)}
             className="flex items-center gap-2 bg-[#0f4a29] hover:bg-[#165a34] text-white text-xs font-extrabold px-5 py-2.5 rounded-full transition-all shadow-xs"
           >
             <Plus className="w-4 h-4" />
@@ -207,7 +211,7 @@ export default function PharmacyMedicineList() {
                       <ActionBtn
                         type="edit"
                         onClick={() =>
-                          navigate(`/pharmacy/medicines/${m.id}/edit`)
+                          navigate(`${base}/medicines/${m.id}/edit`)
                         }
                       />
                       <ActionBtn

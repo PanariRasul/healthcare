@@ -13,8 +13,11 @@ import {
   RefreshCw,
   History,
   Loader2,
+  Boxes,
 } from "lucide-react";
 import { api } from "../../lib/api";
+
+const STOCK_UNIT_OPTIONS = ["Box", "Sheet", "Tablet"];
 
 export default function PharmacyMedicineDetails({
   medicine: initMed,
@@ -23,6 +26,7 @@ export default function PharmacyMedicineDetails({
 }) {
   const [med, setMed] = useState(initMed);
   const [stockAction, setStockAction] = useState("");
+  const [stockUnit, setStockUnit] = useState("");
   const [stockQty, setStockQty] = useState("");
   const [stockReason, setStockReason] = useState("");
   const [stockError, setStockError] = useState("");
@@ -42,11 +46,22 @@ export default function PharmacyMedicineDetails({
       setStockError("Enter a valid quantity.");
       return;
     }
+    if (!stockUnit) {
+      setStockError("Select a stock unit.");
+      return;
+    }
     if (!stockReason.trim()) {
       setStockError("Enter a reason.");
       return;
     }
-    if (stockAction === "reduce" && qty > med.quantity) {
+    const multiplier =
+      stockUnit === "Box"
+        ? (med.tabletsPerSheet || 1) * (med.sheetsPerBox || 1)
+        : stockUnit === "Sheet"
+          ? med.tabletsPerSheet || 1
+          : 1;
+    const qtyInTablets = qty * multiplier;
+    if (stockAction === "reduce" && qtyInTablets > med.quantity) {
       setStockError("Cannot reduce more than current stock.");
       return;
     }
@@ -59,12 +74,14 @@ export default function PharmacyMedicineDetails({
         {
           action: ACTION_LABELS[stockAction],
           quantity: qty,
+          unit: stockUnit,
           reason: stockReason.trim(),
         },
       );
       setMed(updated);
       if (onUpdated) onUpdated(updated);
       setStockQty("");
+      setStockUnit("");
       setStockReason("");
       setStockAction("");
     } catch (err) {
@@ -177,6 +194,57 @@ export default function PharmacyMedicineDetails({
           </div>
         </SectionCard>
 
+        <SectionCard title="Packing Details" icon={Boxes}>
+          <div className="grid grid-cols-2 gap-3 text-xs font-medium mb-4">
+            <div>
+              <div className="text-slate-400 text-[10px] uppercase font-bold mb-0.5">
+                Unit Type
+              </div>
+              <div className="text-slate-900 dark:text-white font-extrabold">
+                {med.unitType || "—"}
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-400 text-[10px] uppercase font-bold mb-0.5">
+                Packing Ratio
+              </div>
+              <div className="text-slate-900 dark:text-white font-extrabold">
+                1 Box = {med.sheetsPerBox} Sheets • 1 Sheet = {med.tabletsPerSheet}{" "}
+                {med.unitType || "Tablet"}
+              </div>
+            </div>
+          </div>
+          <div className="text-[10px] font-bold uppercase text-slate-400 mb-2">
+            Current / Available Stock
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-3 border border-slate-100 dark:border-slate-800 text-center">
+              <div className="text-[10px] font-bold uppercase text-slate-400">
+                Boxes
+              </div>
+              <div className="font-extrabold text-sm text-slate-900 dark:text-white">
+                {med.availableBoxes}
+              </div>
+            </div>
+            <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-3 border border-slate-100 dark:border-slate-800 text-center">
+              <div className="text-[10px] font-bold uppercase text-slate-400">
+                Sheets
+              </div>
+              <div className="font-extrabold text-sm text-slate-900 dark:text-white">
+                {med.availableSheets}
+              </div>
+            </div>
+            <div className="bg-[#0f4a29]/10 rounded-2xl p-3 border border-[#0f4a29]/20 text-center">
+              <div className="text-[10px] font-bold uppercase text-slate-400">
+                Tablets
+              </div>
+              <div className="font-extrabold text-sm text-[#0f4a29] dark:text-[#52b788]">
+                {med.availableTablets}
+              </div>
+            </div>
+          </div>
+        </SectionCard>
+
         <SectionCard title="Supplier Details" icon={Truck}>
           <div className="text-xs font-medium">
             <div className="text-slate-400 text-[10px] uppercase font-bold mb-0.5">
@@ -204,6 +272,7 @@ export default function PharmacyMedicineDetails({
                 key={a.key}
                 onClick={() => {
                   setStockAction(active ? "" : a.key);
+                  setStockUnit("");
                   setStockError("");
                 }}
                 className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-extrabold border transition-all ${
@@ -220,6 +289,33 @@ export default function PharmacyMedicineDetails({
 
         {stockAction && (
           <div className="bg-slate-50 dark:bg-slate-800/40 rounded-2xl p-4 border border-slate-100 dark:border-slate-800 space-y-3">
+            <div>
+              <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1.5">
+                Stock Unit
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {STOCK_UNIT_OPTIONS.map((u) => {
+                  const unitActive = stockUnit === u;
+                  return (
+                    <button
+                      key={u}
+                      type="button"
+                      onClick={() => {
+                        setStockUnit(u);
+                        setStockError("");
+                      }}
+                      className={`px-4 py-1.5 rounded-full text-xs font-extrabold border transition-all ${
+                        unitActive
+                          ? "bg-[#0f4a29] text-white border-[#0f4a29]"
+                          : "bg-white dark:bg-slate-800 text-slate-600 border-slate-200 dark:border-slate-700"
+                      }`}
+                    >
+                      {u}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <input
                 type="number"
@@ -228,7 +324,7 @@ export default function PharmacyMedicineDetails({
                   setStockQty(e.target.value);
                   setStockError("");
                 }}
-                placeholder="Quantity"
+                placeholder={`Quantity${stockUnit ? ` (${stockUnit}s)` : ""}`}
                 className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 dark:text-white focus:outline-none"
               />
               <input

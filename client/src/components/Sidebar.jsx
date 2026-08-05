@@ -1,5 +1,5 @@
 // client/src/components/Sidebar.jsx
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import {
   LayoutDashboard,
@@ -11,6 +11,7 @@ import {
   LogOut,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Menu,
   X,
   Pill,
@@ -63,11 +64,26 @@ const menuConfig = {
     { label: "Staff Accounts", icon: ShieldCheck, to: "/admin/staff" },
     { label: "Employee Directory", icon: Building2, to: "/admin/employees" },
     { label: "Patient Analytics", icon: Users, to: "/admin/patients" },
-    { label: "Pharmacy Analytics", icon: Pill, to: "/admin/pharmacy" },
+    // Every Pharmacy-related page lives under this one dropdown group
+    // instead of as separate flat sidebar items — see the `children`
+    // render branch below.
+    {
+      label: "Pharmacy",
+      icon: Pill,
+      children: [
+        { label: "Dashboard", icon: LayoutDashboard, to: "/admin/pharmacy-dashboard" },
+        { label: "Add Medicine", icon: Plus, to: "/admin/pharmacy/add" },
+        { label: "All Medicines", icon: Pill, to: "/admin/pharmacy/medicines" },
+        { label: "Stock History", icon: History, to: "/admin/pharmacy/stock" },
+        { label: "Expiry Alerts", icon: Clock, to: "/admin/pharmacy/expiry" },
+        { label: "Analytics", icon: ActivitySquare, to: "/admin/pharmacy" },
+      ],
+    },
     { label: "Working Days", icon: CalendarClock, to: "/admin/workingdays" },
     { label: "Biometric Mgmt", icon: Fingerprint, to: "/admin/biometric" },
     { label: "Salary Mgmt", icon: Wallet, to: "/admin/salary-management" },
     { label: "Shift Assignment", icon: UserPlus, to: "/admin/shift-assign" },
+
     { label: "My Profile", icon: UserRound, to: "/admin/profile" },
   ],
   "manager-MANAGER": [
@@ -86,7 +102,13 @@ const HOSPITAL_DASHBOARD_ROUTES = {
 export default function Sidebar({ collapsed, setCollapsed }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  // Which dropdown groups (e.g. "Pharmacy") are expanded. Keyed by group
+  // label. When a key is absent, openness falls back to whether the
+  // current route is inside that group's children (see isOpen below), so
+  // a group auto-expands when you land on one of its pages.
+  const [openGroups, setOpenGroups] = useState({});
 
   const isPharmacy = user?.role === "pharmacy";
   const isManager = user?.role === "manager";
@@ -230,6 +252,101 @@ export default function Sidebar({ collapsed, setCollapsed }) {
             )}
             <ul className="space-y-0.5 list-none m-0 p-0">
               {links.map((link) => {
+                // --- Dropdown group (e.g. "Pharmacy") ---
+                if (link.children) {
+                  const GroupIcon = link.icon;
+                  const isGroupActive = link.children.some((c) =>
+                    location.pathname.startsWith(c.to),
+                  );
+                  const isOpen = openGroups[link.label] ?? isGroupActive;
+
+                  return (
+                    <li key={link.label}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          // Collapsed rail: no room for a submenu, so just
+                          // jump straight to the group's first page.
+                          if (mini) {
+                            navigate(link.children[0].to);
+                            return;
+                          }
+                          setOpenGroups((o) => ({ ...o, [link.label]: !isOpen }));
+                        }}
+                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition-all group relative ${
+                          mini ? "justify-center px-0" : ""
+                        } ${
+                          isGroupActive
+                            ? "text-[#0f4a29] dark:text-white bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 shadow-xs font-extrabold"
+                            : "text-[#6b7280] dark:text-slate-400 hover:text-[#155430] dark:hover:text-white"
+                        }`}
+                      >
+                        {isGroupActive && !mini && (
+                          <span className="absolute left-0 top-1/3 bottom-1/3 w-1 rounded-r-full bg-[#0f4a29]" />
+                        )}
+                        <GroupIcon
+                          className={`flex-shrink-0 ${mini ? "w-5 h-5" : "w-4 h-4"} ${
+                            isGroupActive
+                              ? "text-[#0f4a29] dark:text-[#52b788]"
+                              : "text-[#9ca3af] group-hover:text-[#4b5563]"
+                          }`}
+                          strokeWidth={isGroupActive ? 2.5 : 2}
+                        />
+                        {!mini && (
+                          <span className="truncate flex-1 text-left">
+                            {link.label}
+                          </span>
+                        )}
+                        {!mini && (
+                          <ChevronDown
+                            className={`w-3.5 h-3.5 flex-shrink-0 text-[#9ca3af] transition-transform duration-200 ${
+                              isOpen ? "rotate-180" : ""
+                            }`}
+                          />
+                        )}
+                      </button>
+
+                      {!mini && isOpen && (
+                        <ul className="mt-0.5 mb-1 ml-[26px] pl-3 border-l border-slate-200 dark:border-slate-800 space-y-0.5 list-none">
+                          {link.children.map((child) => {
+                            const ChildIcon = child.icon;
+                            return (
+                              <li key={child.to}>
+                                <NavLink
+                                  to={child.to}
+                                  end
+                                  onClick={() => setMobileOpen(false)}
+                                  className={({ isActive }) =>
+                                    `flex items-center gap-2.5 px-3 py-2 rounded-lg text-[11px] font-bold transition-all ${
+                                      isActive
+                                        ? "text-[#0f4a29] dark:text-white bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 shadow-xs font-extrabold"
+                                        : "text-[#6b7280] dark:text-slate-400 hover:text-[#155430] dark:hover:text-white"
+                                    }`
+                                  }
+                                >
+                                  {({ isActive }) => (
+                                    <>
+                                      <ChildIcon
+                                        className={`w-3.5 h-3.5 flex-shrink-0 ${
+                                          isActive
+                                            ? "text-[#0f4a29] dark:text-[#52b788]"
+                                            : "text-[#9ca3af]"
+                                        }`}
+                                      />
+                                      <span className="truncate">{child.label}</span>
+                                    </>
+                                  )}
+                                </NavLink>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </li>
+                  );
+                }
+
+                // --- Regular flat link ---
                 const Icon = link.icon;
                 return (
                   <li key={link.to}>

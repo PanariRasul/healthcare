@@ -275,20 +275,20 @@ model OPDPatient {
 // relations and keeps invoice history intact even if a patient record is
 // later removed.
 model Invoice {
-  id            String   @id @default(cuid())
-  invoiceNumber String   @unique
+  id            String @id @default(cuid())
+  invoiceNumber String @unique
   patientType   String // "OPD" | "IPD"
   patientId     String
   patientName   String
 
   lineItems     Json // [{ description, qty, rate, amount }]
   subtotal      Float
-  discount      Float    @default(0)
-  gstPercent    Float    @default(0)
-  gstAmount     Float    @default(0)
+  discount      Float   @default(0)
+  gstPercent    Float   @default(0)
+  gstAmount     Float   @default(0)
   grandTotal    Float
-  paid          Float    @default(0)
-  balance       Float    @default(0)
+  paid          Float   @default(0)
+  balance       Float   @default(0)
   paymentMethod String?
   notes         String?
 
@@ -322,13 +322,20 @@ model medicine {
   purchasePrice Float
   sellingPrice  Float
 
-  unitsPerPack        Int                  @default(1)
-  quantity            Int                  @default(0)
-  initialQuantity     Int                  @default(0)
-  reorderLevel        Int                  @default(0)
-  expiryDate          DateTime             @db.Date
-  supplierName        String?
-  notes               String?
+  unitsPerPack    Int      @default(1)
+  quantity        Int      @default(0)
+  initialQuantity Int      @default(0)
+  reorderLevel    Int      @default(0)
+  expiryDate      DateTime @db.Date
+  supplierName    String?
+  notes           String?
+  unitType        UnitType @default(TABLET)
+  sheetsPerBox    Int      @default(1)
+  tabletsPerSheet Int      @default(1)
+  boxesPurchased  Int      @default(0)
+  totalSheets     Int      @default(0)
+  totalTablets    Int      @default(0)
+
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
   category            Category             @relation(fields: [categoryId], references: [id])
@@ -338,14 +345,16 @@ model medicine {
 }
 
 model StockHistory {
-  id         String      @id @default(cuid())
-  medicineId String
-  date       DateTime    @db.Date
-  action     StockAction
-  quantity   Int
-  reason     String
-  createdAt  DateTime    @default(now())
-  medicine   medicine    @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+  id              String      @id @default(cuid())
+  medicineId      String
+  date            DateTime    @db.Date
+  action          StockAction
+  quantity        Int
+  reason          String
+  unit            StockUnit?
+  enteredQuantity Int?
+  createdAt       DateTime    @default(now())
+  medicine        medicine    @relation(fields: [medicineId], references: [id], onDelete: Cascade)
 }
 
 model PrescribedMedicine {
@@ -439,6 +448,27 @@ enum StockAction {
   ADD
   REDUCE
   ADJUST
+}
+
+// Packing information: what kind of pack this medicine comes in.
+enum UnitType {
+  TABLET
+  CAPSULE
+  SYRUP
+  INJECTION
+  OINTMENT
+  DROPS
+  POWDER
+  OTHER
+}
+
+// Which level of the Box → Sheet → Tablet hierarchy a stock update was
+// entered in. Nullable on StockHistory so pre-existing rows (before this
+// feature) remain valid.
+enum StockUnit {
+  BOX
+  SHEET
+  TABLET
 }
 
 // BIOMETRIC ATTENDANCE MODULES

@@ -14,7 +14,7 @@ import invoiceRoutes from "./Invoice/invoice.routes.js";
 const app = express();
 
 // Middleware
-app.use(cors({ origin: process.env.CLIENT_ORIGIN || "http://localhost:5173" }));
+app.use(cors({ origin: process.env.CLIENT_ORIGIN }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

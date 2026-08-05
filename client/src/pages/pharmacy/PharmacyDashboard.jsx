@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { StatCard, PageHeader } from "../../components/UI";
 import { api } from "../../lib/api";
+import { useAuth } from "../../context/AuthContext";
 import {
   Pill,
   Package,
@@ -55,6 +56,11 @@ export default function PharmacyDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const navigate = useNavigate();
+  const { user } = useAuth();
+  // Admin uses /admin/pharmacy/* routes, the Pharmacy role uses /pharmacy/*.
+  // Keep every navigate() call below rooted here so links always land on
+  // whichever set of routes the current user is actually allowed to see.
+  const base = user?.role === "admin" ? "/admin/pharmacy" : "/pharmacy";
 
   useEffect(() => {
     (async () => {
@@ -115,7 +121,7 @@ export default function PharmacyDashboard() {
         subtitle="Medicine inventory overview, stock alerts, and valuation summaries"
         action={
           <button
-            onClick={() => navigate("/pharmacy/add")}
+            onClick={() => navigate(`${base}/add`)}
             className="flex items-center gap-2 bg-[#0f4a29] hover:bg-[#165a34] text-white text-xs font-extrabold px-5 py-2.5 rounded-full transition-all shadow-xs"
           >
             <Plus className="w-4 h-4" />
@@ -172,7 +178,7 @@ export default function PharmacyDashboard() {
                 <Package className="w-4 h-4" /> Low Stock
               </h3>
               <button
-                onClick={() => navigate("/pharmacy/medicines")}
+                onClick={() => navigate(`${base}/medicines`)}
                 className="text-[10px] font-extrabold text-[#0f4a29] dark:text-[#52b788] hover:underline"
               >
                 View All →
@@ -213,7 +219,7 @@ export default function PharmacyDashboard() {
                 <Clock className="w-4 h-4" /> Expiring Soon
               </h3>
               <button
-                onClick={() => navigate("/pharmacy/expiry")}
+                onClick={() => navigate(`${base}/expiry`)}
                 className="text-[10px] font-extrabold text-[#0f4a29] dark:text-[#52b788] hover:underline"
               >
                 View All →
@@ -254,7 +260,7 @@ export default function PharmacyDashboard() {
                 <XCircle className="w-4 h-4" /> Expired
               </h3>
               <button
-                onClick={() => navigate("/pharmacy/expiry")}
+                onClick={() => navigate(`${base}/expiry`)}
                 className="text-[10px] font-extrabold text-[#0f4a29] dark:text-[#52b788] hover:underline"
               >
                 View All →
@@ -330,7 +336,7 @@ export default function PharmacyDashboard() {
               Recently Added
             </h3>
             <button
-              onClick={() => navigate("/pharmacy/medicines")}
+              onClick={() => navigate(`${base}/medicines`)}
               className="text-[10px] font-extrabold text-[#0f4a29] dark:text-[#52b788] hover:underline"
             >
               View All →

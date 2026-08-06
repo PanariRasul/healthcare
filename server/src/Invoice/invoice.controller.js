@@ -64,6 +64,40 @@ export async function listPatientInvoices(req, res) {
   }
 }
 
+// GET /api/invoices/type/:patientType?search= -> every invoice of one type
+// (e.g. all "PHARMACY" invoices), newest first. Used by the Pharmacy
+// Billing list page — unlike listPatientInvoices above, this isn't scoped
+// to a single patient. `search` (optional) matches invoiceNumber or
+// patientName, case-insensitive.
+export async function listInvoicesByType(req, res) {
+  try {
+    const { patientType } = req.params;
+    const { search = "" } = req.query;
+    if (!isValidType(patientType)) {
+      return res.status(400).json({
+        message: `patientType must be one of: ${TYPE_VALUES.join(", ")}`,
+      });
+    }
+
+    const where = { patientType };
+    if (search.trim()) {
+      where.OR = [
+        { invoiceNumber: { contains: search.trim(), mode: "insensitive" } },
+        { patientName: { contains: search.trim(), mode: "insensitive" } },
+      ];
+    }
+
+    const invoices = await prisma.invoice.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+    });
+    res.json(invoices);
+  } catch (err) {
+    console.error("listInvoicesByType error:", err);
+    res.status(500).json({ message: "Failed to fetch invoices" });
+  }
+}
+
 // GET /api/invoices/:id -> single invoice (for reprinting)
 export async function getInvoice(req, res) {
   try {

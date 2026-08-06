@@ -5,6 +5,10 @@
 // to an OPD consultation or IPD stay.
 //
 // Usage: <PharmacyInvoiceModal onClose={() => setInvoicing(false)} />
+// Or, to open straight onto an existing saved invoice (e.g. from the
+// Pharmacy Billing list page): pass `invoiceToEdit={invoiceRow}` — this
+// skips the setup screen entirely and loads that invoice's line items into
+// the editor immediately.
 //
 // Flow:
 //   1. Setup screen — pick an existing (registered OPD) patient by search,
@@ -100,7 +104,10 @@ const blankRow = () => ({
   rate: 0,
 });
 
-export default function PharmacyInvoiceModal({ onClose }) {
+export default function PharmacyInvoiceModal({
+  onClose,
+  invoiceToEdit = null,
+}) {
   const { user } = useAuth();
 
   // Only roles that actually have OPD access can search the OPD patient
@@ -225,8 +232,11 @@ export default function PharmacyInvoiceModal({ onClose }) {
 
   // Runs once a patient is chosen (setup screen completed) — preps a fresh
   // blank invoice and loads that patient's prior Pharmacy invoices, if any.
+  // Skipped when jumping straight into an existing invoice (invoiceToEdit)
+  // — that path populates everything itself via viewPastInvoice below, and
+  // this reset would otherwise immediately clobber it with a blank one.
   useEffect(() => {
-    if (!chosenPatient?.id) return;
+    if (!chosenPatient?.id || chosenPatient.__skipReset) return;
     setLineItems([blankRow()]);
     setDiscount(0);
     setGstPercent(0);
@@ -316,6 +326,36 @@ export default function PharmacyInvoiceModal({ onClose }) {
     setSavedInvoiceId(inv.id);
     setShowHistory(false);
   }
+
+  // Opened directly onto a specific invoice (e.g. "View" from the Pharmacy
+  // Billing list) — jump straight past the setup screen into the editor,
+  // preloaded with that invoice's details, instead of making the user
+  // re-pick the patient they already picked when they created it.
+  useEffect(() => {
+    if (!invoiceToEdit) return;
+    const isRealPatient = !String(invoiceToEdit.patientId || "").startsWith(
+      "manual-",
+    );
+    setChosenPatient({
+      __manual: !isRealPatient,
+      __skipReset: true,
+      id: invoiceToEdit.patientId,
+      name: invoiceToEdit.patientName,
+      age: null,
+      gender: "",
+      phone: "",
+      place: "",
+    });
+    viewPastInvoice(invoiceToEdit);
+    if (isRealPatient) {
+      setHistoryLoading(true);
+      fetchPatientInvoices("PHARMACY", invoiceToEdit.patientId)
+        .then((invs) => setHistory(invs))
+        .catch(() => setHistory([]))
+        .finally(() => setHistoryLoading(false));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function startNewInvoice() {
     setLineItems([blankRow()]);

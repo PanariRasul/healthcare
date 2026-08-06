@@ -161,6 +161,18 @@ function AppRoutes() {
             matches the naming convention of the other Admin pages. */}
         <Route path="/admin/profile" element={<AdminProfile />} />
 
+        {/* Admin access to the Pharmacy module. Same page components the
+            Pharmacy role uses, mounted under /admin/pharmacy-* paths so
+            they don't collide with the /pharmacy/* routes below (which are
+            gated by role="pharmacy"). This keeps ProtectedRoute untouched —
+            admin already gets in via role="admin" on this block. */}
+        <Route path="/admin/pharmacy-dashboard" element={<PharmacyDashboard />} />
+        <Route path="/admin/pharmacy/add" element={<PharmacyMedicineForm />} />
+        <Route path="/admin/pharmacy/medicines/:id/edit" element={<PharmacyMedicineForm />} />
+        <Route path="/admin/pharmacy/medicines" element={<PharmacyMedicineList />} />
+        <Route path="/admin/pharmacy/stock" element={<PharmacyStockHistory />} />
+        <Route path="/admin/pharmacy/expiry" element={<PharmacyExpiryAlerts />} />
+
       </Route>
 
       {/* Manager — reuses the same Employee Directory and Shift Assignment

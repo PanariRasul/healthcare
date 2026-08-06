@@ -1,6 +1,12 @@
 // server/src/pharmacy/medicine.controller.js
 import prisma from "../lib/prisma.js";
-import { fromDbMedicine, toDbStockAction } from "./pharmacy.mappers.js";
+import {
+  fromDbMedicine,
+  toDbStockAction,
+  toDbUnitType,
+  toDbStockUnit,
+  computeStockBreakdown,
+} from "./pharmacy.mappers.js";
 import { clearStockReadMarks, clearExpiryReadMarks } from "../notifications/notifications.service.js";
 
 const MEDICINE_INCLUDE = { category: true, stockHistory: true };
@@ -46,6 +52,7 @@ export async function createMedicine(req, res) {
       serialNumber, drugName, genericName, category, manufacturer,
       batchNumber, purchasePrice, sellingPrice, unitsPerPack, quantity, reorderLevel,
       expiryDate, supplierName, notes,
+      unitType, sheetsPerBox, tabletsPerSheet, boxesPurchased,
     } = req.body;
 
     if (!serialNumber || !drugName || !category || !batchNumber || !expiryDate) {
@@ -64,11 +71,24 @@ export async function createMedicine(req, res) {
       return res.status(409).json({ message: "This Medicine ID is already in use." });
     }
 
-    const initialQuantity = parseInt(quantity, 10) || 0;
-    // How many tablets/units come in one pack — purchasePrice/sellingPrice
-    // are entered per pack, so this is required to get a per-unit price.
-    // Defaults to 1 (i.e. "price already is per unit") if not provided.
-    const unitsPerPackNum = Math.max(parseInt(unitsPerPack, 10) || 1, 1);
+    // --- Packing information: Box → Sheet → Tablet ---
+    const sheetsPerBoxNum = Math.max(parseInt(sheetsPerBox, 10) || 1, 1);
+    const tabletsPerSheetNum = Math.max(parseInt(tabletsPerSheet, 10) || 1, 1);
+    const boxesPurchasedNum = Math.max(parseInt(boxesPurchased, 10) || 0, 0);
+    const totalSheetsNum = boxesPurchasedNum * sheetsPerBoxNum;
+    const totalTabletsNum = totalSheetsNum * tabletsPerSheetNum;
+
+    // unitsPerPack stays in sync with sheetsPerBox * tabletsPerSheet so the
+    // existing per-unit valuation math in getMedicineStats keeps working
+    // unchanged, regardless of whether the caller even knows about packing.
+    const unitsPerPackNum = sheetsPerBoxNum * tabletsPerSheetNum;
+
+    // Backward compatible: if the caller didn't send packing info at all
+    // (an older client, or a script hitting the API directly with a flat
+    // quantity), fall back to the legacy single `quantity` field so nothing
+    // breaks.
+    const initialQuantity =
+      boxesPurchasedNum > 0 ? totalTabletsNum : (parseInt(quantity, 10) || 0);
 
     const medicine = await prisma.medicine.create({
       data: {
@@ -81,6 +101,12 @@ export async function createMedicine(req, res) {
         purchasePrice: parseFloat(purchasePrice) || 0,
         sellingPrice: parseFloat(sellingPrice) || 0,
         unitsPerPack: unitsPerPackNum,
+        unitType: toDbUnitType(unitType),
+        sheetsPerBox: sheetsPerBoxNum,
+        tabletsPerSheet: tabletsPerSheetNum,
+        boxesPurchased: boxesPurchasedNum,
+        totalSheets: totalSheetsNum,
+        totalTablets: totalTabletsNum,
         quantity: initialQuantity,
         // Permanent record of this batch's starting count. Unlike `quantity`
         // (which Add/Reduce/Adjust Stock and OPD prescriptions change every
@@ -98,6 +124,8 @@ export async function createMedicine(req, res) {
               action: "ADD",
               quantity: initialQuantity,
               reason: "Initial stock entry",
+              unit: boxesPurchasedNum > 0 ? "BOX" : null,
+              enteredQuantity: boxesPurchasedNum > 0 ? boxesPurchasedNum : initialQuantity,
             },
           ],
         },
@@ -126,6 +154,7 @@ export async function updateMedicine(req, res) {
       serialNumber, drugName, genericName, category, manufacturer,
       batchNumber, purchasePrice, sellingPrice, unitsPerPack, reorderLevel,
       expiryDate, supplierName, notes,
+      unitType, sheetsPerBox, tabletsPerSheet, boxesPurchased,
     } = req.body;
 
     const data = {};
@@ -142,11 +171,38 @@ export async function updateMedicine(req, res) {
     if (batchNumber !== undefined) data.batchNumber = batchNumber;
     if (purchasePrice !== undefined) data.purchasePrice = parseFloat(purchasePrice) || 0;
     if (sellingPrice !== undefined) data.sellingPrice = parseFloat(sellingPrice) || 0;
-    if (unitsPerPack !== undefined) data.unitsPerPack = Math.max(parseInt(unitsPerPack, 10) || 1, 1);
     if (reorderLevel !== undefined) data.reorderLevel = parseInt(reorderLevel, 10) || 0;
     if (expiryDate !== undefined) data.expiryDate = new Date(expiryDate);
     if (supplierName !== undefined) data.supplierName = supplierName || null;
     if (notes !== undefined) data.notes = notes || null;
+    if (unitType !== undefined) data.unitType = toDbUnitType(unitType);
+
+    // Packing config edits (e.g. fixing a typo'd sheets-per-box) never touch
+    // `quantity` — the Box/Sheet/Tablet breakdown just recalculates itself
+    // from the (unchanged) quantity next time it's read. unitsPerPack and
+    // the totalSheets/totalTablets snapshot are kept consistent here so
+    // stats/valuation math and the "originally purchased" record stay
+    // accurate for the new packing numbers.
+    const packingChanged =
+      sheetsPerBox !== undefined || tabletsPerSheet !== undefined || boxesPurchased !== undefined;
+    if (packingChanged) {
+      const sheetsPerBoxNum =
+        sheetsPerBox !== undefined ? Math.max(parseInt(sheetsPerBox, 10) || 1, 1) : existing.sheetsPerBox;
+      const tabletsPerSheetNum =
+        tabletsPerSheet !== undefined ? Math.max(parseInt(tabletsPerSheet, 10) || 1, 1) : existing.tabletsPerSheet;
+      const boxesPurchasedNum =
+        boxesPurchased !== undefined ? Math.max(parseInt(boxesPurchased, 10) || 0, 0) : existing.boxesPurchased;
+
+      data.sheetsPerBox = sheetsPerBoxNum;
+      data.tabletsPerSheet = tabletsPerSheetNum;
+      data.boxesPurchased = boxesPurchasedNum;
+      data.unitsPerPack = sheetsPerBoxNum * tabletsPerSheetNum;
+      data.totalSheets = boxesPurchasedNum * sheetsPerBoxNum;
+      data.totalTablets = data.totalSheets * tabletsPerSheetNum;
+    } else if (unitsPerPack !== undefined) {
+      // Legacy path: caller sent a raw unitsPerPack with no packing fields.
+      data.unitsPerPack = Math.max(parseInt(unitsPerPack, 10) || 1, 1);
+    }
 
     if (category !== undefined) {
       const categoryRow = await prisma.category.findUnique({ where: { name: category } });
@@ -207,6 +263,12 @@ export async function getMedicineStats(req, res) {
     let outOfStockCount = 0;
     let expiredCount = 0;
     let expiringSoonCount = 0;
+    // Sum of each medicine's current Box/Sheet/Tablet breakdown. Adding
+    // "Boxes" across different medicines is a simple headline count (not a
+    // unit-normalized total), matching how the dashboard cards present it.
+    let totalBoxes = 0;
+    let totalSheets = 0;
+    let totalTablets = 0;
 
     const lowStockItems = [];
     const expiringSoonItems = [];
@@ -218,6 +280,11 @@ export async function getMedicineStats(req, res) {
 
       totalPurchaseValue += purchasePricePerUnit * m.quantity;
       totalSellingValue += sellingPricePerUnit * m.quantity;
+
+      const breakdown = computeStockBreakdown(m.quantity, m.tabletsPerSheet, m.sheetsPerBox);
+      totalBoxes += breakdown.availableBoxes;
+      totalSheets += breakdown.availableSheets;
+      totalTablets += breakdown.availableTablets;
 
       if (m.quantity <= 0) {
         outOfStockCount += 1;
@@ -251,6 +318,9 @@ export async function getMedicineStats(req, res) {
       outOfStockCount,
       expiredCount,
       expiringSoonCount,
+      totalBoxes,
+      totalSheets,
+      totalTablets,
       lowStockItems: lowStockItems.slice(0, 5),
       expiringSoonItems: expiringSoonItems.slice(0, 5),
     });
@@ -263,7 +333,7 @@ export async function getMedicineStats(req, res) {
 // Updates the medicine's quantity AND logs a StockHistory row, atomically.
 export async function addStockEntry(req, res) {
   try {
-    const { action, quantity, reason } = req.body;
+    const { action, quantity, reason, unit } = req.body;
     const dbAction = toDbStockAction(action);
 
     if (!dbAction) {
@@ -280,21 +350,33 @@ export async function addStockEntry(req, res) {
     const medicine = await prisma.medicine.findUnique({ where: { id: req.params.id } });
     if (!medicine) return res.status(404).json({ message: "Medicine not found." });
 
+    // Defaults to TABLET (i.e. "the number entered IS the tablet count")
+    // when no unit is sent, so any older client still calling this endpoint
+    // without a `unit` field behaves exactly as it did before this feature.
+    const dbUnit = toDbStockUnit(unit) || "TABLET";
+    const tabletsPerSheet = medicine.tabletsPerSheet || 1;
+    const sheetsPerBox = medicine.sheetsPerBox || 1;
+    const multiplier =
+      dbUnit === "BOX" ? tabletsPerSheet * sheetsPerBox : dbUnit === "SHEET" ? tabletsPerSheet : 1;
+    // Everything from here on operates in tablets, same as before this
+    // feature — only the multiplier used to get there is new.
+    const qtyInTablets = qty * multiplier;
+
     let newQuantity;
     let historyQuantity;
     if (dbAction === "ADD") {
-      newQuantity = medicine.quantity + qty;
-      historyQuantity = qty;
+      newQuantity = medicine.quantity + qtyInTablets;
+      historyQuantity = qtyInTablets;
     } else if (dbAction === "REDUCE") {
-      if (qty > medicine.quantity) {
+      if (qtyInTablets > medicine.quantity) {
         return res.status(400).json({ message: "Cannot reduce more than current stock." });
       }
-      newQuantity = medicine.quantity - qty;
-      historyQuantity = -qty;
+      newQuantity = medicine.quantity - qtyInTablets;
+      historyQuantity = -qtyInTablets;
     } else {
-      // ADJUST — quantity typed IS the new absolute quantity
-      newQuantity = qty;
-      historyQuantity = qty - medicine.quantity;
+      // ADJUST — quantity typed (converted to tablets) IS the new absolute quantity
+      newQuantity = qtyInTablets;
+      historyQuantity = qtyInTablets - medicine.quantity;
     }
 
     const updated = await prisma.$transaction(async (tx) => {
@@ -309,6 +391,8 @@ export async function addStockEntry(req, res) {
           action: dbAction,
           quantity: historyQuantity,
           reason: reason.trim(),
+          unit: dbUnit,
+          enteredQuantity: qty,
         },
       });
       return tx.medicine.findUnique({

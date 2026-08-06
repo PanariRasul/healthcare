@@ -168,7 +168,13 @@ export default function PharmacyStockHistory() {
                         : "text-rose-500"
                     }
                   >
-                    {h.quantity > 0 ? `+${h.quantity}` : h.quantity}
+                    {h.unit && h.enteredQuantity
+                      ? `${h.quantity > 0 ? "+" : "-"}${h.enteredQuantity} ${h.unit}${
+                          h.enteredQuantity === 1 ? "" : "s"
+                        }`
+                      : h.quantity > 0
+                        ? `+${h.quantity}`
+                        : h.quantity}
                   </span>
                 </Td>
                 <Td className="text-slate-500 font-medium max-w-[200px] truncate">

@@ -19,8 +19,21 @@ import {
   Loader2,
   Layers,
   Copy,
+  Boxes,
 } from "lucide-react";
 import { api } from "../../lib/api";
+import { useAuth } from "../../context/AuthContext";
+
+const UNIT_TYPES = [
+  "Tablet",
+  "Capsule",
+  "Syrup",
+  "Injection",
+  "Ointment",
+  "Drops",
+  "Powder",
+  "Other",
+];
 
 const defaultForm = {
   serialNumber: "",
@@ -31,11 +44,15 @@ const defaultForm = {
   batchNumber: "",
   purchasePrice: "",
   sellingPrice: "",
-  quantity: "",
   reorderLevel: "",
   expiryDate: "",
   supplierName: "",
   notes: "",
+  // Packing information: Box → Sheet → Tablet
+  unitType: "Tablet",
+  sheetsPerBox: "",
+  tabletsPerSheet: "",
+  boxesPurchased: "",
 };
 
 function AddCategoryModal({ onCancel, onCreated }) {
@@ -122,6 +139,12 @@ export default function PharmacyMedicineForm({
   const [error, setError] = useState("");
   const [existingMedicines, setExistingMedicines] = useState([]);
   const navigate = useNavigate();
+  const { user } = useAuth();
+  // Admin uses /admin/pharmacy/*, the Pharmacy role uses /pharmacy/*. When
+  // no onDone callback is passed (i.e. this form is reached directly via a
+  // route rather than embedded in another page), fall back to whichever
+  // path matches the current user's role instead of always /pharmacy/*.
+  const base = user?.role === "admin" ? "/admin/pharmacy" : "/pharmacy";
 
   useEffect(() => {
     if (!needsFetch) return;
@@ -179,6 +202,11 @@ export default function PharmacyMedicineForm({
       reorderLevel: m.reorderLevel ?? "",
       supplierName: m.supplierName || "",
       notes: m.notes || "",
+      unitType: m.unitType || "Tablet",
+      sheetsPerBox: m.sheetsPerBox ?? "",
+      tabletsPerSheet: m.tabletsPerSheet ?? "",
+      // boxesPurchased intentionally NOT copied — that's this new batch's
+      // own purchase count, not the template's.
     }));
   };
 
@@ -200,6 +228,15 @@ export default function PharmacyMedicineForm({
 
   const set = (field) => (val) => setForm((f) => ({ ...f, [field]: val }));
 
+  // Packing calculations — purely derived display, recomputed on every
+  // render from whatever's currently typed. Nothing here is persisted
+  // until submit.
+  const sheetsPerBoxNum = parseInt(form.sheetsPerBox, 10) || 0;
+  const tabletsPerSheetNum = parseInt(form.tabletsPerSheet, 10) || 0;
+  const boxesPurchasedNum = parseInt(form.boxesPurchased, 10) || 0;
+  const computedTotalSheets = boxesPurchasedNum * sheetsPerBoxNum;
+  const computedTotalTablets = computedTotalSheets * tabletsPerSheetNum;
+
   const handleCategoryCreated = (category) => {
     setCategories((cats) =>
       [...cats, category].sort((a, b) => a.name.localeCompare(b.name)),
@@ -218,8 +255,10 @@ export default function PharmacyMedicineForm({
         ...form,
         purchasePrice: parseFloat(form.purchasePrice) || 0,
         sellingPrice: parseFloat(form.sellingPrice) || 0,
-        quantity: parseInt(form.quantity) || 0,
         reorderLevel: parseInt(form.reorderLevel) || 0,
+        sheetsPerBox: parseInt(form.sheetsPerBox) || 1,
+        tabletsPerSheet: parseInt(form.tabletsPerSheet) || 1,
+        boxesPurchased: parseInt(form.boxesPurchased) || 0,
       };
       try {
         const { medicine: updated } = await api.put(
@@ -232,7 +271,7 @@ export default function PharmacyMedicineForm({
           );
         }
         if (onDone) onDone(updated);
-        else navigate("/pharmacy/medicines");
+        else navigate(`${base}/medicines`);
       } catch (err) {
         setError(err.message || "Could not update medicine.");
       } finally {
@@ -244,14 +283,14 @@ export default function PharmacyMedicineForm({
     try {
       await api.post("/pharmacy/medicines", form);
       if (onDone) onDone();
-      else navigate("/pharmacy/medicines");
+      else navigate(`${base}/medicines`);
     } catch (err) {
       setError(err.message || "Could not add medicine.");
       setSaving(false);
     }
   };
 
-  const back = () => (onDone ? onDone() : navigate("/pharmacy/medicines"));
+  const back = () => (onDone ? onDone() : navigate(`${base}/medicines`));
 
   if (fetchingMedicine) {
     return (
@@ -346,10 +385,74 @@ export default function PharmacyMedicineForm({
           </div>
         </SectionCard>
 
-        <SectionCard title="Pricing & Stock" icon={DollarSign}>
+        <SectionCard title="Packing Information" icon={Boxes}>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                Unit Type<span className="text-rose-500 ml-1">*</span>
+              </label>
+              <select
+                value={form.unitType}
+                onChange={(e) => set("unitType")(e.target.value)}
+                required
+                className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 dark:text-white focus:outline-none focus:border-[#0f4a29]"
+              >
+                {UNIT_TYPES.map((u) => (
+                  <option key={u} value={u}>
+                    {u}
+                  </option>
+                ))}
+              </select>
+            </div>
             <FormInput
-              label="Purchase Price (₹)"
+              label="Sheets Per Box"
+              type="number"
+              value={form.sheetsPerBox}
+              onChange={set("sheetsPerBox")}
+              placeholder="e.g. 10"
+              required
+            />
+            <FormInput
+              label="Tablets Per Sheet"
+              type="number"
+              value={form.tabletsPerSheet}
+              onChange={set("tabletsPerSheet")}
+              placeholder="e.g. 15"
+              required
+            />
+            <FormInput
+              label="Total Boxes Purchased"
+              type="number"
+              value={form.boxesPurchased}
+              onChange={set("boxesPurchased")}
+              placeholder="e.g. 20"
+              required
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4 mt-4">
+            <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-3 border border-slate-100 dark:border-slate-800">
+              <div className="text-[10px] font-bold uppercase text-slate-400">
+                Total Sheets (Auto)
+              </div>
+              <div className="font-extrabold text-sm text-slate-900 dark:text-white">
+                {computedTotalSheets}
+              </div>
+            </div>
+            <div className="bg-[#0f4a29]/10 rounded-2xl p-3 border border-[#0f4a29]/20">
+              <div className="text-[10px] font-bold uppercase text-slate-400">
+                Total Tablets (Auto)
+              </div>
+              <div className="font-extrabold text-sm text-[#0f4a29] dark:text-[#52b788]">
+                {computedTotalTablets}
+              </div>
+            </div>
+          </div>
+        </SectionCard>
+
+        <SectionCard title="Pricing & Stock" icon={DollarSign}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <FormInput
+              label="Purchase Price Per Box (₹)"
               type="number"
               value={form.purchasePrice}
               onChange={set("purchasePrice")}
@@ -357,19 +460,11 @@ export default function PharmacyMedicineForm({
               required
             />
             <FormInput
-              label="Selling Price (₹)"
+              label="Selling Price Per Box (₹)"
               type="number"
               value={form.sellingPrice}
               onChange={set("sellingPrice")}
               placeholder="0.00"
-              required
-            />
-            <FormInput
-              label="Quantity In Stock"
-              type="number"
-              value={form.quantity}
-              onChange={set("quantity")}
-              placeholder="0"
               required
             />
             <FormInput

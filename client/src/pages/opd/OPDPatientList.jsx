@@ -15,7 +15,14 @@ import {
 } from "../../components/UI";
 import OPDPatientDetails from "./OPDPatientDetails";
 import InvoiceModal from "../../components/InvoiceModal";
-import { UserPlus, SlidersHorizontal, X, Search, Receipt } from "lucide-react";
+import {
+  UserPlus,
+  SlidersHorizontal,
+  X,
+  Search,
+  Receipt,
+  FilePlus2,
+} from "lucide-react";
 import { api } from "../../lib/api";
 
 const PER_PAGE = 7;
@@ -37,6 +44,7 @@ export default function OPDPatients({ isDoctor = false }) {
   const [deleteId, setDeleteId] = useState(null);
   const [viewing, setViewing] = useState(null);
   const [invoicing, setInvoicing] = useState(null);
+  const [manualInvoicing, setManualInvoicing] = useState(false);
   const navigate = useNavigate();
   const basePath = isDoctor ? "/doctor/opd" : "/opd";
 
@@ -103,13 +111,22 @@ export default function OPDPatients({ isDoctor = false }) {
         title="OPD Patients Directory"
         subtitle={`Outpatient consultation records (${filtered.length} patients)`}
         action={
-          <button
-            onClick={() => navigate(`${basePath}/register`)}
-            className="flex items-center gap-2 bg-[#0f4a29] hover:bg-[#165a34] text-white text-xs font-extrabold px-5 py-2.5 rounded-full transition-all shadow-xs"
-          >
-            <UserPlus className="w-4 h-4" />
-            <span>Register Patient</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setManualInvoicing(true)}
+              className="flex items-center gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-[#0f4a29] text-slate-700 dark:text-slate-300 text-xs font-extrabold px-5 py-2.5 rounded-full transition-all shadow-xs"
+            >
+              <FilePlus2 className="w-4 h-4" />
+              <span>Create Invoice</span>
+            </button>
+            <button
+              onClick={() => navigate(`${basePath}/register`)}
+              className="flex items-center gap-2 bg-[#0f4a29] hover:bg-[#165a34] text-white text-xs font-extrabold px-5 py-2.5 rounded-full transition-all shadow-xs"
+            >
+              <UserPlus className="w-4 h-4" />
+              <span>Register Patient</span>
+            </button>
+          </div>
         }
       />
 
@@ -254,6 +271,13 @@ export default function OPDPatients({ isDoctor = false }) {
           patient={invoicing}
           onClose={() => setInvoicing(null)}
         />
+      )}
+
+      {/* "Create Invoice" — manual entry, not tied to a specific row. Staff
+          picks an existing patient or types in walk-in details themselves;
+          see InvoiceModal's manual-flow setup screen. */}
+      {manualInvoicing && (
+        <InvoiceModal type="OPD" onClose={() => setManualInvoicing(false)} />
       )}
     </div>
   );

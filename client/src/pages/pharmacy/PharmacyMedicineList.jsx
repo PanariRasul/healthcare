@@ -14,7 +14,8 @@ import {
 } from "../../components/UI";
 import { PharmacyStatusBadge, getMedicineStatus } from "./PharmacyDashboard";
 import PharmacyMedicineDetails from "./PharmacyMedicineDetails";
-import { Plus, Search, Loader2 } from "lucide-react";
+import PharmacyInvoiceModal from "../../components/PharmacyInvoiceModal";
+import { Plus, Search, Loader2, Receipt } from "lucide-react";
 import { api } from "../../lib/api";
 import { useAuth } from "../../context/AuthContext";
 
@@ -27,6 +28,12 @@ const STATUS_FILTERS = [
   "Expiring Soon",
   "Expired",
 ];
+const TYPE_FILTERS = [
+  "",
+  "Generic Medicine",
+  "Ayurvedic Medicine",
+  "Surgery Related Item",
+];
 
 export default function PharmacyMedicineList() {
   const [medicines, setMedicines] = useState([]);
@@ -35,9 +42,11 @@ export default function PharmacyMedicineList() {
   const [deleting, setDeleting] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
   const [page, setPage] = useState(1);
   const [deleteId, setDeleteId] = useState(null);
   const [viewing, setViewing] = useState(null);
+  const [invoicing, setInvoicing] = useState(false);
   const navigate = useNavigate();
   const { user } = useAuth();
   // Admin uses /admin/pharmacy/*, the Pharmacy role uses /pharmacy/*.
@@ -66,7 +75,8 @@ export default function PharmacyMedicineList() {
       m.genericName?.toLowerCase().includes(search.toLowerCase()) ||
       m.batchNumber?.toLowerCase().includes(search.toLowerCase());
     const matchStatus = !statusFilter || getMedicineStatus(m) === statusFilter;
-    return matchName && matchStatus;
+    const matchType = !typeFilter || m.medicineType === typeFilter;
+    return matchName && matchStatus && matchType;
   });
 
   const totalPages = Math.ceil(filtered.length / PER_PAGE) || 1;
@@ -106,13 +116,22 @@ export default function PharmacyMedicineList() {
         title="Medicine Inventory"
         subtitle={`Pharmacy inventory records (${filtered.length} drugs listed)`}
         action={
-          <button
-            onClick={() => navigate(`${base}/add`)}
-            className="flex items-center gap-2 bg-[#0f4a29] hover:bg-[#165a34] text-white text-xs font-extrabold px-5 py-2.5 rounded-full transition-all shadow-xs"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Add Medicine</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setInvoicing(true)}
+              className="flex items-center gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-[#0f4a29] text-slate-700 dark:text-slate-300 text-xs font-extrabold px-5 py-2.5 rounded-full transition-all shadow-xs"
+            >
+              <Receipt className="w-4 h-4" />
+              <span>Create Invoice</span>
+            </button>
+            <button
+              onClick={() => navigate(`${base}/add`)}
+              className="flex items-center gap-2 bg-[#0f4a29] hover:bg-[#165a34] text-white text-xs font-extrabold px-5 py-2.5 rounded-full transition-all shadow-xs"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Add Medicine</span>
+            </button>
+          </div>
         }
       />
 
@@ -155,6 +174,29 @@ export default function PharmacyMedicineList() {
         </div>
       </div>
 
+      {/* Type Filter Row */}
+      <div className="flex items-center gap-1.5 p-1 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-full shadow-2xs overflow-x-auto max-w-full w-fit">
+        {TYPE_FILTERS.map((t) => {
+          const active = typeFilter === t;
+          return (
+            <button
+              key={t}
+              onClick={() => {
+                setTypeFilter(t);
+                setPage(1);
+              }}
+              className={`px-4 py-1.5 rounded-full text-xs font-extrabold transition-all whitespace-nowrap ${
+                active
+                  ? "bg-[#0f4a29] text-white shadow-xs"
+                  : "text-slate-500 hover:text-slate-900"
+              }`}
+            >
+              {t || "All Types"}
+            </button>
+          );
+        })}
+      </div>
+
       {loading ? (
         <div className="p-12 text-center text-xs font-bold text-slate-400">
           Loading medicines...
@@ -166,6 +208,7 @@ export default function PharmacyMedicineList() {
           <thead>
             <tr>
               <Th>Medicine</Th>
+              <Th>Type</Th>
               <Th>Category</Th>
               <Th>Batch</Th>
               <Th>Purchase ₹</Th>
@@ -192,11 +235,19 @@ export default function PharmacyMedicineList() {
                       {m.drugName}
                     </button>
                   </Td>
+                  <Td>
+                    <span className="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                      {m.medicineType}
+                    </span>
+                  </Td>
                   <Td>{m.category}</Td>
                   <Td className="font-mono text-xs">{m.batchNumber}</Td>
                   <Td className="font-bold">₹{m.purchasePrice}</Td>
                   <Td className="text-[#0f4a29] dark:text-[#52b788] font-bold">
                     ₹{m.sellingPrice}
+                    <div className="text-slate-400 dark:text-slate-500 font-medium text-[10px]">
+                      ₹{(m.sellingPricePerTablet || 0).toFixed(2)}/tab
+                    </div>
                   </Td>
                   <Td className="font-extrabold text-slate-900 dark:text-white">
                     {m.quantity}
@@ -236,6 +287,10 @@ export default function PharmacyMedicineList() {
           onConfirm={() => handleDelete(deleteId)}
           onCancel={() => !deleting && setDeleteId(null)}
         />
+      )}
+
+      {invoicing && (
+        <PharmacyInvoiceModal onClose={() => setInvoicing(false)} />
       )}
     </div>
   );

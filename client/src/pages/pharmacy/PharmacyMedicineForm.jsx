@@ -35,11 +35,18 @@ const UNIT_TYPES = [
   "Other",
 ];
 
+const MEDICINE_TYPES = [
+  "Generic Medicine",
+  "Ayurvedic Medicine",
+  "Surgery Related Item",
+];
+
 const defaultForm = {
   serialNumber: "",
   drugName: "",
   genericName: "",
   category: "",
+  medicineType: "Generic Medicine",
   manufacturer: "",
   batchNumber: "",
   purchasePrice: "",
@@ -196,6 +203,7 @@ export default function PharmacyMedicineForm({
       drugName: m.drugName,
       genericName: m.genericName || "",
       category: m.category || "",
+      medicineType: m.medicineType || "Generic Medicine",
       manufacturer: m.manufacturer || "",
       purchasePrice: m.purchasePrice ?? "",
       sellingPrice: m.sellingPrice ?? "",
@@ -236,6 +244,26 @@ export default function PharmacyMedicineForm({
   const boxesPurchasedNum = parseInt(form.boxesPurchased, 10) || 0;
   const computedTotalSheets = boxesPurchasedNum * sheetsPerBoxNum;
   const computedTotalTablets = computedTotalSheets * tabletsPerSheetNum;
+
+  // Per-unit cost preview — purely derived, never persisted. tabletsPerBox
+  // is the same Box → Sheet → Tablet math the server uses (pharmacy.mappers.js
+  // computeStockBreakdown / fromDbMedicine), so this always matches what the
+  // list/details pages will show once saved.
+  const tabletsPerBoxNum = sheetsPerBoxNum * tabletsPerSheetNum;
+  const purchasePriceNum = parseFloat(form.purchasePrice) || 0;
+  const sellingPriceNum = parseFloat(form.sellingPrice) || 0;
+  const purchasePricePerTablet = tabletsPerBoxNum
+    ? purchasePriceNum / tabletsPerBoxNum
+    : 0;
+  const sellingPricePerTablet = tabletsPerBoxNum
+    ? sellingPriceNum / tabletsPerBoxNum
+    : 0;
+  const purchasePricePerSheet = sheetsPerBoxNum
+    ? purchasePriceNum / sheetsPerBoxNum
+    : 0;
+  const sellingPricePerSheet = sheetsPerBoxNum
+    ? sellingPriceNum / sheetsPerBoxNum
+    : 0;
 
   const handleCategoryCreated = (category) => {
     setCategories((cats) =>
@@ -382,6 +410,31 @@ export default function PharmacyMedicineForm({
               placeholder="e.g. BTH-2024-001"
               required
             />
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                Medicine Type<span className="text-rose-500 ml-1">*</span>
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {MEDICINE_TYPES.map((t) => {
+                  const active = form.medicineType === t;
+                  return (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => set("medicineType")(t)}
+                      className={`px-4 py-2 rounded-full text-xs font-extrabold border transition-all ${
+                        active
+                          ? "bg-[#0f4a29] text-white border-[#0f4a29]"
+                          : "bg-white dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700"
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </SectionCard>
 
@@ -474,6 +527,45 @@ export default function PharmacyMedicineForm({
               onChange={set("expiryDate")}
               required
             />
+          </div>
+
+          {/* Per-Sheet / Per-Tablet cost preview — purely derived from the
+              box price + packing ratio above, e.g. a ₹1000 box of 10 sheets
+              × 10 tablets = ₹100/sheet = ₹10/tablet. Recomputes live as any
+              of those fields change; nothing here is stored separately. */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+            <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-3 border border-slate-100 dark:border-slate-800">
+              <div className="text-[10px] font-bold uppercase text-slate-400">
+                Purchase / Sheet
+              </div>
+              <div className="font-extrabold text-sm text-slate-900 dark:text-white">
+                ₹{purchasePricePerSheet.toFixed(2)}
+              </div>
+            </div>
+            <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-3 border border-slate-100 dark:border-slate-800">
+              <div className="text-[10px] font-bold uppercase text-slate-400">
+                Purchase / Tablet
+              </div>
+              <div className="font-extrabold text-sm text-slate-900 dark:text-white">
+                ₹{purchasePricePerTablet.toFixed(2)}
+              </div>
+            </div>
+            <div className="bg-[#0f4a29]/10 rounded-2xl p-3 border border-[#0f4a29]/20">
+              <div className="text-[10px] font-bold uppercase text-slate-400">
+                Selling / Sheet
+              </div>
+              <div className="font-extrabold text-sm text-[#0f4a29] dark:text-[#52b788]">
+                ₹{sellingPricePerSheet.toFixed(2)}
+              </div>
+            </div>
+            <div className="bg-[#0f4a29]/10 rounded-2xl p-3 border border-[#0f4a29]/20">
+              <div className="text-[10px] font-bold uppercase text-slate-400">
+                Selling / Tablet
+              </div>
+              <div className="font-extrabold text-sm text-[#0f4a29] dark:text-[#52b788]">
+                ₹{sellingPricePerTablet.toFixed(2)}
+              </div>
+            </div>
           </div>
         </SectionCard>
 

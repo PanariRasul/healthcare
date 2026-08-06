@@ -1,6 +1,7 @@
 // client/src/pages/admin/biometric/BiometricStaffEmployee.jsx
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { useAuth } from "../../../context/AuthContext";
 import { api } from "../../../lib/api";
 import { PageHeader, SectionCard, SearchBar } from "../../../components/UI";
 import { Fingerprint, Check, X, Loader2 } from "lucide-react";
@@ -34,6 +35,14 @@ function Field({
 
 export default function BiometricStaffEmployee() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  // This page is reused under both /admin/biometric/manage and
+  // /manager/biometric/manage (Manager now has full Biometric Management
+  // access — see App.jsx). Base the "back to list" redirect on the current
+  // role so a Manager isn't sent to the Admin-only /admin/biometric route,
+  // which would bounce them straight to /login.
+  const basePath =
+    user?.role === "manager" ? "/manager/biometric" : "/admin/biometric";
   const [searchParams] = useSearchParams();
 
   const mode = searchParams.get("mode") === "edit" ? "edit" : "add";
@@ -128,9 +137,7 @@ export default function BiometricStaffEmployee() {
   }, [isUser, personSearch]);
 
   const backToList = () => {
-    navigate(
-      `/admin/biometric?tab=${isUser ? "userMapping" : "employeeMapping"}`,
-    );
+    navigate(`${basePath}?tab=${isUser ? "userMapping" : "employeeMapping"}`);
   };
 
   const handleSave = async (e) => {

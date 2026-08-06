@@ -1,26 +1,28 @@
-// client/src/components/InvoiceModal.jsx
+// client/src/components/PharmacyInvoiceModal.jsx
 //
-// Shared "Generate Invoice" modal used by both OPD and IPD screens.
-// Usage:
-//   <InvoiceModal type="OPD" patient={row} onClose={() => setInvoicing(null)} />
-//   <InvoiceModal type="IPD" patient={row} onClose={() => setInvoicing(null)} />
+// Pharmacy-only billing — separate from the OPD/IPD "Generate Invoice" flow
+// in InvoiceModal.jsx. For over-the-counter medicine sales that aren't tied
+// to an OPD consultation or IPD stay.
 //
-// `patient` only needs to contain `id` — the modal fetches full details
-// (daily charges / medicines / prescriptions) itself, and loads/saves
-// invoice history via /api/invoices (see server/src/Invoice + client/src/api/invoice.api.js).
+// Usage: <PharmacyInvoiceModal onClose={() => setInvoicing(false)} />
 //
-// MANUAL INVOICE MODE (OPD only, currently):
-//   <InvoiceModal type="OPD" onClose={() => setInvoicing(false)} />
-//   Omit `patient` entirely to open a "Create Invoice" flow that isn't tied
-//   to a specific row. The modal first shows a setup screen where staff
-//   picks either:
-//     - "Existing Patient" — search & select a real registered OPD patient
-//       (behaves exactly like the normal per-patient flow from there on), or
-//     - "New / Walk-in" — type patient details in by hand. Nothing is saved
-//       to the Patient table; a synthetic local id (prefixed "manual-") is
-//       used purely so the invoice has a patientId to store against.
+// Flow:
+//   1. Setup screen — pick an existing (registered OPD) patient by search,
+//      or type in a walk-in customer's details by hand. Nothing is saved to
+//      the Patient table for a walk-in; a synthetic local id (prefixed
+//      "manual-") is used purely so the invoice has a patientId to store.
+//   2. Invoice editor — each line item's "medicine" field is a live
+//      autocomplete against the pharmacy's medicine list (typing filters by
+//      drug name / generic name / batch as you go); selecting a match
+//      prefills the description and per-tablet selling price, both still
+//      editable afterwards. Typing something that matches nothing just
+//      stays as a free-text line item.
+//   3. Saves through the same /api/invoices backend as OPD/IPD, tagged
+//      patientType: "PHARMACY" — its own invoice number series
+//      (VPC-INV-PHARMACY-000001...), kept fully separate from OPD/IPD
+//      invoice history.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   X,
@@ -36,7 +38,6 @@ import {
   ArrowLeft,
 } from "lucide-react";
 import { api } from "../lib/api";
-import { fetchPatient as fetchIpdPatient } from "../pages/ipd/api/ipd.api";
 import { useAuth } from "../context/AuthContext";
 import {
   fetchNextInvoiceNumber,
@@ -45,13 +46,10 @@ import {
   updateInvoice,
 } from "../api/invoice.api";
 
-// ---------------------------------------------------------------------------
-// Clinic letterhead — edit these to match your actual clinic details/logo.
-// logoUrl points at client/public/healthcare.jpg, which Vite serves at "/healthcare.jpg".
-// ---------------------------------------------------------------------------
+// Same letterhead as InvoiceModal.jsx — edit both if the clinic details change.
 const CLINIC = {
   name: "Virupakshipuram Paralysis Centre",
-  tagline: "Physiotherapy & Neuro Rehabilitation",
+  tagline: "Pharmacy Billing",
   logoUrl: "/healthcare.jpg",
   footerName: "Virupakshipuram Paralysis Centre",
   footerAddress:
@@ -91,41 +89,38 @@ const fmtDateTime = (d) =>
     : "—";
 
 let rowSeq = 0;
-const nextRowId = () => `row-${Date.now()}-${rowSeq++}`;
-
-// Best-guess payment method from existing patient payment fields, just used
-// as a sensible default for the dropdown — the user can always change it.
-function guessPaymentMethod(data, isIPD) {
-  if (isIPD) {
-    const amounts = { Cash: data.cash, UPI: data.upi, Card: data.card };
-    const top = Object.entries(amounts).sort(
-      (a, b) => (b[1] || 0) - (a[1] || 0),
-    )[0];
-    return top && top[1] > 0 ? top[0] : "Cash";
-  }
-  if ((data.upi || 0) > (data.cash || 0)) return "UPI";
-  return "Cash";
-}
-
+const nextRowId = () => `prow-${Date.now()}-${rowSeq++}`;
 let manualSeq = 0;
-// Synthetic id for a walk-in/manually-entered patient — never touches the
-// Patient table, it's just something to hang the invoice's patientId off.
 const nextManualId = () => `manual-${Date.now()}-${manualSeq++}`;
+const blankRow = () => ({
+  id: nextRowId(),
+  medicineId: null,
+  description: "",
+  qty: 1,
+  rate: 0,
+});
 
-export default function InvoiceModal({ type, patient = null, onClose }) {
-  const isIPD = type === "IPD";
+export default function PharmacyInvoiceModal({ onClose }) {
   const { user } = useAuth();
 
-  // If the caller didn't pass a specific `patient`, this is the "Create
-  // Invoice" manual-entry flow — show a setup screen first (pick existing
-  // patient vs. type one in) instead of immediately fetching a patient.
-  const isManualFlow = !patient;
-  const [chosenPatient, setChosenPatient] = useState(patient);
+  // Only roles that actually have OPD access can search the OPD patient
+  // directory — Admin/Pharmacy/Manager (and anyone else) may not have the
+  // OPD module assigned, and /opd/patients rejects them for it. Calling it
+  // anyway was tripping the app's session-expiry handling on the 401/403
+  // and force-logging the user out, which looked like a crash back to
+  // /login. Skip the call entirely for anyone without OPD access instead.
+  const hasOpdAccess =
+    user?.role === "receptionist" ||
+    user?.role === "doctor" ||
+    (user?.modules || []).includes("OPD");
 
-  // ---- Manual-flow setup screen state (only relevant when isManualFlow) ----
-  const [setupTab, setSetupTab] = useState("existing"); // "existing" | "manual"
+  // ---- Setup screen: existing patient search vs. walk-in entry ----
+  const [chosenPatient, setChosenPatient] = useState(null);
+  const [setupTab, setSetupTab] = useState(
+    hasOpdAccess ? "existing" : "manual",
+  );
   const [allPatients, setAllPatients] = useState([]);
-  const [patientsLoading, setPatientsLoading] = useState(false);
+  const [patientsLoading, setPatientsLoading] = useState(hasOpdAccess);
   const [patientSearch, setPatientSearch] = useState("");
   const [manualForm, setManualForm] = useState({
     name: "",
@@ -133,20 +128,17 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
     gender: "",
     phone: "",
     place: "",
-    fee: "",
   });
   const [manualFormError, setManualFormError] = useState("");
 
   useEffect(() => {
-    if (!isManualFlow || isIPD) return; // existing-patient search is OPD-only for now
-    setPatientsLoading(true);
+    if (!hasOpdAccess) return;
     api
       .get("/opd/patients")
       .then(({ patients: data }) => setAllPatients(data))
       .catch(() => setAllPatients([]))
       .finally(() => setPatientsLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [hasOpdAccess]);
 
   const matchingPatients = patientSearch.trim()
     ? allPatients.filter(
@@ -159,12 +151,14 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
       )
     : allPatients;
 
-  const selectExistingPatient = (p) => setChosenPatient({ id: p.id });
+  // Search results already carry everything the invoice header needs
+  // (name/age/gender/phone/place/serialNumber) — no extra fetch required.
+  const selectExistingPatient = (p) => setChosenPatient(p);
 
   const submitManualPatient = () => {
     setManualFormError("");
     if (!manualForm.name.trim()) {
-      setManualFormError("Patient name is required.");
+      setManualFormError("Customer name is required.");
       return;
     }
     setChosenPatient({
@@ -175,26 +169,41 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
       gender: manualForm.gender || "",
       phone: manualForm.phone || "",
       place: manualForm.place || "",
-      fee: manualForm.fee ? Number(manualForm.fee) : 0,
-      prescribedMedicines: [],
-      followUpDate: null,
-      total: 0,
     });
   };
 
-  // Lets staff back out of an in-progress manual/existing pick and return to
-  // the setup screen — e.g. wrong patient selected, or wants to switch tabs.
   const backToSetup = () => {
     setChosenPatient(null);
-    setFull(null);
-    setError("");
+    setSavedInvoiceId(null);
   };
 
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [full, setFull] = useState(null); // full patient record from API
+  // ---- Medicine catalogue for the line-item autocomplete ----
+  const [medicines, setMedicines] = useState([]);
+  const [medicinesLoading, setMedicinesLoading] = useState(true);
+  useEffect(() => {
+    api
+      .get("/pharmacy/medicines")
+      .then(({ medicines: data }) => setMedicines(data))
+      .catch(() => setMedicines([]))
+      .finally(() => setMedicinesLoading(false));
+  }, []);
 
-  const [lineItems, setLineItems] = useState([]);
+  // Only one row's suggestion dropdown is open at a time.
+  const [activeSearchRowId, setActiveSearchRowId] = useState(null);
+  const suggestionsFor = (row) => {
+    const q = row.description.trim().toLowerCase();
+    if (!q) return [];
+    return medicines
+      .filter(
+        (m) =>
+          m.drugName.toLowerCase().includes(q) ||
+          (m.genericName || "").toLowerCase().includes(q) ||
+          (m.batchNumber || "").toLowerCase().includes(q),
+      )
+      .slice(0, 6);
+  };
+
+  const [lineItems, setLineItems] = useState([blankRow()]);
   const [discount, setDiscount] = useState(0);
   const [gstPercent, setGstPercent] = useState(0);
   const [paid, setPaid] = useState(0);
@@ -211,128 +220,40 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
   const [saveError, setSaveError] = useState("");
 
   const [history, setHistory] = useState([]);
-  const [historyLoading, setHistoryLoading] = useState(true);
-  const [showHistory, setShowHistory] = useState(true);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
+  // Runs once a patient is chosen (setup screen completed) — preps a fresh
+  // blank invoice and loads that patient's prior Pharmacy invoices, if any.
   useEffect(() => {
-    // Manual flow: nothing chosen yet — the setup screen is showing, don't
-    // try to load/fetch anything until staff picks or enters a patient.
     if (!chosenPatient?.id) return;
-
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      setError("");
-      try {
-        const data = chosenPatient.__manual
-          ? chosenPatient // walk-in entry — nothing to fetch, use as typed
-          : await fetchFullPatient();
-        if (cancelled) return;
-        setFull(data);
-        buildDefaults(data);
-
-        // Preview the next invoice number (not reserved until actually saved)
-        fetchNextInvoiceNumber(type)
-          .then((r) => !cancelled && setInvoiceNumber(r.invoiceNumber))
-          .catch(() => {});
-      } catch (err) {
-        if (!cancelled)
-          setError(err.message || "Failed to load patient details");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-
-    if (chosenPatient.__manual) {
-      // Walk-in entries use a fresh synthetic id every time, so there's
-      // never any prior invoice history to show.
-      setHistory([]);
-      setHistoryLoading(false);
-    } else {
-      loadHistory();
-    }
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chosenPatient?.id, type]);
-
-  // Always hits the server for the current patient record — used both on
-  // mount and by "New Invoice", so a fresh invoice never reuses a stale
-  // snapshot from earlier in the same modal session.
-  async function fetchFullPatient() {
-    if (isIPD) return fetchIpdPatient(chosenPatient.id);
-    const res = await api.get(`/opd/patients/${chosenPatient.id}`);
-    return res.patient;
-  }
-
-  function loadHistory() {
-    setHistoryLoading(true);
-    fetchPatientInvoices(type, chosenPatient.id)
-      .then((invs) => setHistory(invs))
-      .catch(() => setHistory([]))
-      .finally(() => setHistoryLoading(false));
-  }
-
-  function buildDefaults(data) {
-    const items = [];
-
-    if (isIPD) {
-      (data.dailyCharges || []).forEach((c) => {
-        items.push({
-          id: nextRowId(),
-          description: `Stay / Room Charges${c.date ? ` — ${fmtDate(c.date)}` : ""}`,
-          qty: c.days || 1,
-          rate: c.rate || 0,
-        });
-      });
-      (data.medicines || []).forEach((m) => {
-        items.push({
-          id: nextRowId(),
-          description: `${m.name}${m.dosage ? ` (${m.dosage})` : ""}`,
-          qty: m.quantity || 1,
-          rate: 0, // price not tracked on IPD medicine records — fill in manually
-        });
-      });
-      setPaid(data.totalPaid || 0);
-      setPaymentMethod(guessPaymentMethod(data, true));
-      setNotes(
-        data.followUpDate ? `Next visit: ${fmtDate(data.followUpDate)}` : "",
-      );
-    } else {
-      if (data.fee) {
-        items.push({
-          id: nextRowId(),
-          description: "OPD Consultation Fee",
-          qty: 1,
-          rate: data.fee,
-        });
-      }
-      (data.prescribedMedicines || []).forEach((pm) => {
-        items.push({
-          id: nextRowId(),
-          description: `${pm.drugName}${pm.dosageInstructions ? ` (${pm.dosageInstructions})` : ""}`,
-          qty: pm.quantity || 1,
-          rate: 0, // medicine price not exposed to OPD prescriptions — fill in manually
-        });
-      });
-      setPaid(data.total || 0);
-      setPaymentMethod(guessPaymentMethod(data, false));
-      setNotes(
-        data.followUpDate ? `Next visit: ${fmtDate(data.followUpDate)}` : "",
-      );
-    }
-
-    if (items.length === 0) {
-      items.push({ id: nextRowId(), description: "", qty: 1, rate: 0 });
-    }
-    setLineItems(items);
+    setLineItems([blankRow()]);
     setDiscount(0);
     setGstPercent(0);
+    setPaid(0);
+    setPaymentMethod("Cash");
+    setNotes("");
     setSavedInvoiceId(null);
     setInvoiceDate(new Date());
     setCreatedByDisplay(user?.fullName || "");
-  }
+    setSaveError("");
+
+    fetchNextInvoiceNumber("PHARMACY")
+      .then((r) => setInvoiceNumber(r.invoiceNumber))
+      .catch(() => {});
+
+    if (chosenPatient.__manual) {
+      setHistory([]);
+      setHistoryLoading(false);
+    } else {
+      setHistoryLoading(true);
+      fetchPatientInvoices("PHARMACY", chosenPatient.id)
+        .then((invs) => setHistory(invs))
+        .catch(() => setHistory([]))
+        .finally(() => setHistoryLoading(false));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chosenPatient?.id]);
 
   const updateRow = (id, field, value) => {
     setLineItems((rows) =>
@@ -340,12 +261,23 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
     );
   };
 
-  const addRow = () =>
-    setLineItems((rows) => [
-      ...rows,
-      { id: nextRowId(), description: "", qty: 1, rate: 0 },
-    ]);
+  const selectMedicineForRow = (rowId, med) => {
+    setLineItems((rows) =>
+      rows.map((r) =>
+        r.id === rowId
+          ? {
+              ...r,
+              medicineId: med.id,
+              description: `${med.drugName}${med.batchNumber ? ` (Batch ${med.batchNumber})` : ""}`,
+              rate: Number((med.sellingPricePerTablet || 0).toFixed(2)),
+            }
+          : r,
+      ),
+    );
+    setActiveSearchRowId(null);
+  };
 
+  const addRow = () => setLineItems((rows) => [...rows, blankRow()]);
   const removeRow = (id) =>
     setLineItems((rows) => rows.filter((r) => r.id !== id));
 
@@ -360,15 +292,18 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
   const paidVal = Number(paid) || 0;
   const balance = Math.max(0, Math.round((grandTotal - paidVal) * 100) / 100);
 
-  // Load a previously saved invoice back into the editable form. From here
-  // the user can adjust it and click "Update Invoice" to persist changes to
-  // this same record (or "New Invoice" to abandon and start fresh).
   function viewPastInvoice(inv) {
     const items = Array.isArray(inv.lineItems) ? inv.lineItems : [];
     setLineItems(
       items.length
-        ? items.map((it) => ({ id: nextRowId(), ...it }))
-        : [{ id: nextRowId(), description: "", qty: 1, rate: 0 }],
+        ? items.map((it) => ({
+            id: nextRowId(),
+            medicineId: null,
+            description: it.description,
+            qty: it.qty,
+            rate: it.rate,
+          }))
+        : [blankRow()],
     );
     setDiscount(inv.discount || 0);
     setGstPercent(inv.gstPercent || 0);
@@ -382,27 +317,21 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
     setShowHistory(false);
   }
 
-  async function startNewInvoice() {
-    setLoading(true);
-    setError("");
-    try {
-      // Walk-in entries have no server record to refetch — just reuse the
-      // typed-in details as-is. Real patients refetch to avoid reusing a
-      // stale snapshot from earlier in the same modal session.
-      const data = chosenPatient.__manual
-        ? chosenPatient
-        : await fetchFullPatient();
-      setFull(data);
-      buildDefaults(data);
-      fetchNextInvoiceNumber(type)
-        .then((r) => setInvoiceNumber(r.invoiceNumber))
-        .catch(() => {});
-    } catch (err) {
-      setError(err.message || "Failed to load patient details");
-    } finally {
-      setLoading(false);
-      setShowHistory(false);
-    }
+  function startNewInvoice() {
+    setLineItems([blankRow()]);
+    setDiscount(0);
+    setGstPercent(0);
+    setPaid(0);
+    setPaymentMethod("Cash");
+    setNotes("");
+    setSavedInvoiceId(null);
+    setInvoiceDate(new Date());
+    setCreatedByDisplay(user?.fullName || "");
+    setSaveError("");
+    fetchNextInvoiceNumber("PHARMACY")
+      .then((r) => setInvoiceNumber(r.invoiceNumber))
+      .catch(() => {});
+    setShowHistory(false);
   }
 
   async function handleSave() {
@@ -410,9 +339,9 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
     setSaveError("");
     try {
       const payload = {
-        patientType: type,
-        patientId: full.id,
-        patientName: full.name,
+        patientType: "PHARMACY",
+        patientId: chosenPatient.id,
+        patientName: chosenPatient.name,
         lineItems: lineItems.map(({ description, qty, rate }) => ({
           description,
           qty: Number(qty) || 0,
@@ -436,7 +365,11 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
       setInvoiceNumber(saved.invoiceNumber);
       setInvoiceDate(saved.createdAt);
       setCreatedByDisplay(saved.createdByName || user?.fullName || "");
-      loadHistory();
+      if (!chosenPatient.__manual) {
+        fetchPatientInvoices("PHARMACY", chosenPatient.id)
+          .then((invs) => setHistory(invs))
+          .catch(() => {});
+      }
     } catch (err) {
       setSaveError(err.message || "Failed to save invoice");
     } finally {
@@ -467,7 +400,11 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
       };
       const updated = await updateInvoice(savedInvoiceId, payload);
       setInvoiceDate(updated.createdAt);
-      loadHistory();
+      if (!chosenPatient.__manual) {
+        fetchPatientInvoices("PHARMACY", chosenPatient.id)
+          .then((invs) => setHistory(invs))
+          .catch(() => {});
+      }
     } catch (err) {
       setSaveError(err.message || "Failed to update invoice");
     } finally {
@@ -504,28 +441,24 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
         <div className="flex items-center justify-between p-5 border-b border-slate-100 dark:border-slate-800 sticky top-0 bg-white dark:bg-slate-900 z-10 no-print">
           <div>
             <h3 className="font-extrabold text-slate-900 dark:text-white text-base">
-              {isManualFlow && !chosenPatient
-                ? "Create Invoice"
-                : "Generate Invoice"}
+              {chosenPatient ? "Pharmacy Invoice" : "Create Pharmacy Invoice"}
             </h3>
             <p className="text-xs text-slate-400 font-medium">
-              {isManualFlow && !chosenPatient
-                ? "Pick an existing patient or enter walk-in details"
-                : `${type} Patient — review & edit before printing`}
+              {chosenPatient
+                ? "Medicine billing — review & edit before printing"
+                : "Pick an existing patient or enter walk-in customer details"}
             </p>
           </div>
           <div className="flex items-center gap-2">
             {chosenPatient && (
               <>
-                {isManualFlow && (
-                  <button
-                    onClick={backToSetup}
-                    title="Choose a different patient"
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-extrabold"
-                  >
-                    <ArrowLeft className="w-4 h-4" />
-                  </button>
-                )}
+                <button
+                  onClick={backToSetup}
+                  title="Choose a different patient"
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-extrabold"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
                 <button
                   onClick={startNewInvoice}
                   title="Start a fresh invoice"
@@ -536,7 +469,7 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                 </button>
                 <button
                   onClick={() => setShowHistory((v) => !v)}
-                  title="Past invoices for this patient"
+                  title="Past pharmacy invoices for this patient"
                   className="flex items-center gap-1.5 px-3 py-2 rounded-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-extrabold"
                 >
                   <History className="w-4 h-4" />
@@ -554,37 +487,38 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
           </div>
         </div>
 
-        {isManualFlow && !chosenPatient ? (
+        {!chosenPatient ? (
           <div className="p-6 space-y-5">
-            {/* Existing vs Walk-in tabs */}
-            <div className="flex gap-1.5 p-1 bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-800 rounded-full w-fit">
-              {[
-                {
-                  key: "existing",
-                  label: "Existing Patient",
-                  icon: UserSearch,
-                },
-                { key: "manual", label: "New / Walk-in", icon: UserPlus2 },
-              ].map((t) => {
-                const Icon = t.icon;
-                const active = setupTab === t.key;
-                return (
-                  <button
-                    key={t.key}
-                    onClick={() => setSetupTab(t.key)}
-                    className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-extrabold transition-all ${
-                      active
-                        ? "bg-[#0f4a29] text-white shadow-xs"
-                        : "text-slate-500 dark:text-slate-400 hover:text-slate-900"
-                    }`}
-                  >
-                    <Icon className="w-3.5 h-3.5" /> {t.label}
-                  </button>
-                );
-              })}
-            </div>
+            {hasOpdAccess && (
+              <div className="flex gap-1.5 p-1 bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-800 rounded-full w-fit">
+                {[
+                  {
+                    key: "existing",
+                    label: "Existing Patient",
+                    icon: UserSearch,
+                  },
+                  { key: "manual", label: "New / Walk-in", icon: UserPlus2 },
+                ].map((t) => {
+                  const Icon = t.icon;
+                  const active = setupTab === t.key;
+                  return (
+                    <button
+                      key={t.key}
+                      onClick={() => setSetupTab(t.key)}
+                      className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-extrabold transition-all ${
+                        active
+                          ? "bg-[#0f4a29] text-white shadow-xs"
+                          : "text-slate-500 dark:text-slate-400 hover:text-slate-900"
+                      }`}
+                    >
+                      <Icon className="w-3.5 h-3.5" /> {t.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
-            {setupTab === "existing" ? (
+            {setupTab === "existing" && hasOpdAccess ? (
               <div className="space-y-3">
                 <div className="relative">
                   <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -632,8 +566,9 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
             ) : (
               <div className="space-y-4">
                 <p className="text-xs text-slate-400 font-medium">
-                  For a walk-in who isn't in the OPD directory. These details
-                  are only used on this invoice — no patient record is created.
+                  For a walk-in customer who isn't in the OPD directory. These
+                  details are only used on this invoice — no patient record is
+                  created.
                 </p>
                 {manualFormError && (
                   <div className="bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/30 rounded-2xl px-4 py-3 text-rose-600 dark:text-rose-400 text-xs font-bold">
@@ -643,7 +578,7 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-[11px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
-                      Patient Name
+                      Customer Name
                       <span className="text-rose-500 ml-0.5">*</span>
                     </label>
                     <input
@@ -712,20 +647,6 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                       className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 dark:text-white focus:outline-none focus:border-[#0f4a29]"
                     />
                   </div>
-                  <div>
-                    <label className="block text-[11px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
-                      Consultation Fee (₹)
-                    </label>
-                    <input
-                      type="number"
-                      value={manualForm.fee}
-                      onChange={(e) =>
-                        setManualForm((f) => ({ ...f, fee: e.target.value }))
-                      }
-                      placeholder="0.00"
-                      className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 dark:text-white focus:outline-none focus:border-[#0f4a29]"
-                    />
-                  </div>
                 </div>
                 <div className="flex justify-end pt-2">
                   <button
@@ -738,24 +659,12 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
               </div>
             )}
           </div>
-        ) : loading ? (
-          <div className="flex items-center justify-center py-16 text-xs font-bold text-slate-400">
-            <Loader2 className="w-5 h-5 animate-spin text-[#0f4a29] mr-2" />
-            Loading patient details...
-          </div>
-        ) : error ? (
-          <div className="p-6">
-            <div className="bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/30 rounded-2xl px-4 py-3 text-rose-600 dark:text-rose-400 text-xs font-bold">
-              {error}
-            </div>
-          </div>
         ) : (
           <>
-            {/* Past invoices for this patient */}
             {showHistory && (
               <div className="no-print mx-6 mt-4 bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 rounded-2xl p-4">
                 <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-2">
-                  Previously Generated Invoices
+                  Previous Pharmacy Invoices
                 </h4>
                 {historyLoading ? (
                   <p className="text-xs text-slate-400 font-medium">
@@ -763,7 +672,7 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                   </p>
                 ) : history.length === 0 ? (
                   <p className="text-xs text-slate-400 font-medium">
-                    No invoices generated yet for this patient.
+                    No pharmacy invoices generated yet for this patient.
                   </p>
                 ) : (
                   <div className="space-y-1.5 max-h-48 overflow-y-auto">
@@ -802,7 +711,6 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
             )}
 
             <div className="p-6 sm:p-8 space-y-6 text-slate-900 dark:text-white">
-              {/* Letterhead */}
               <div className="text-center border-b-2 border-slate-800 dark:border-slate-200 pb-4">
                 {CLINIC.logoUrl && (
                   <img
@@ -834,7 +742,6 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                 </div>
               )}
 
-              {/* Invoice meta */}
               <div className="flex flex-wrap justify-between gap-3 text-xs font-medium">
                 <div>
                   <div className="text-slate-400 text-[10px] uppercase font-bold">
@@ -850,10 +757,12 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                 </div>
                 <div>
                   <div className="text-slate-400 text-[10px] uppercase font-bold">
-                    {type} No.
+                    Patient Type
                   </div>
                   <div className="font-extrabold">
-                    #{full?.serialNumber || full?.tokenNumber || "—"}
+                    {chosenPatient.__manual
+                      ? "Walk-in"
+                      : `OPD #${chosenPatient.serialNumber || "—"}`}
                   </div>
                 </div>
                 <div>
@@ -866,45 +775,47 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                 </div>
               </div>
 
-              {/* Patient details */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-medium border-y border-slate-100 dark:border-slate-800 py-4">
                 <div>
                   <div className="text-slate-400 text-[10px] uppercase font-bold">
                     Patient
                   </div>
-                  <div className="font-extrabold">{full?.name}</div>
+                  <div className="font-extrabold">{chosenPatient.name}</div>
                 </div>
                 <div>
                   <div className="text-slate-400 text-[10px] uppercase font-bold">
                     Age
                   </div>
                   <div className="font-extrabold">
-                    {full?.age ? `${full.age} yrs` : "—"}
+                    {chosenPatient.age ? `${chosenPatient.age} yrs` : "—"}
                   </div>
                 </div>
                 <div>
                   <div className="text-slate-400 text-[10px] uppercase font-bold">
                     Gender
                   </div>
-                  <div className="font-extrabold">{full?.gender || "—"}</div>
+                  <div className="font-extrabold">
+                    {chosenPatient.gender || "—"}
+                  </div>
                 </div>
                 <div>
                   <div className="text-slate-400 text-[10px] uppercase font-bold">
                     Phone
                   </div>
-                  <div className="font-extrabold">{full?.phone || "—"}</div>
+                  <div className="font-extrabold">
+                    {chosenPatient.phone || "—"}
+                  </div>
                 </div>
               </div>
 
-              {/* Treatment table */}
+              {/* Medicine line items — description field is a live
+                  autocomplete against the pharmacy catalogue. */}
               <div>
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b-2 border-slate-800 dark:border-slate-200 text-left">
                       <th className="py-2 pr-2 font-extrabold w-8">#</th>
-                      <th className="py-2 px-2 font-extrabold">
-                        Treatment / Item
-                      </th>
+                      <th className="py-2 px-2 font-extrabold">Medicine</th>
                       <th className="py-2 px-2 font-extrabold text-right w-20">
                         Qty
                       </th>
@@ -923,18 +834,72 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                         key={r.id}
                         className="border-b border-slate-100 dark:border-slate-800"
                       >
-                        <td className="py-1.5 pr-2 text-slate-400">{i + 1}</td>
-                        <td className="py-1.5 px-2">
+                        <td className="py-1.5 pr-2 text-slate-400 align-top">
+                          {i + 1}
+                        </td>
+                        <td className="py-1.5 px-2 relative">
                           <input
                             value={r.description}
-                            onChange={(e) =>
-                              updateRow(r.id, "description", e.target.value)
+                            onChange={(e) => {
+                              updateRow(r.id, "description", e.target.value);
+                              updateRow(r.id, "medicineId", null);
+                              setActiveSearchRowId(r.id);
+                            }}
+                            onFocus={() => setActiveSearchRowId(r.id)}
+                            onBlur={() =>
+                              setTimeout(
+                                () =>
+                                  setActiveSearchRowId((id) =>
+                                    id === r.id ? null : id,
+                                  ),
+                                150,
+                              )
                             }
-                            placeholder="Treatment / medicine name"
+                            placeholder="Start typing a medicine name..."
                             className="w-full bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-[#0f4a29]"
                           />
+                          {activeSearchRowId === r.id &&
+                            r.description.trim() && (
+                              <div className="no-print absolute z-20 left-2 right-2 mt-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg max-h-48 overflow-y-auto">
+                                {medicinesLoading ? (
+                                  <div className="px-3 py-2 text-[11px] text-slate-400 font-medium flex items-center gap-1.5">
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                    Loading medicines...
+                                  </div>
+                                ) : suggestionsFor(r).length === 0 ? (
+                                  <div className="px-3 py-2 text-[11px] text-slate-400 font-medium">
+                                    No matches — this will stay as a free-text
+                                    line item.
+                                  </div>
+                                ) : (
+                                  suggestionsFor(r).map((med) => (
+                                    <button
+                                      key={med.id}
+                                      type="button"
+                                      onMouseDown={(e) => e.preventDefault()}
+                                      onClick={() =>
+                                        selectMedicineForRow(r.id, med)
+                                      }
+                                      className="w-full text-left px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                                    >
+                                      <div className="font-extrabold text-slate-900 dark:text-white">
+                                        {med.drugName}
+                                      </div>
+                                      <div className="text-[10px] text-slate-400 font-medium">
+                                        Batch {med.batchNumber} · {med.quantity}{" "}
+                                        in stock · ₹
+                                        {(
+                                          med.sellingPricePerTablet || 0
+                                        ).toFixed(2)}
+                                        /tab
+                                      </div>
+                                    </button>
+                                  ))
+                                )}
+                              </div>
+                            )}
                         </td>
-                        <td className="py-1.5 px-2">
+                        <td className="py-1.5 px-2 align-top">
                           <input
                             type="number"
                             value={r.qty}
@@ -944,7 +909,7 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                             className="w-full bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-right focus:outline-none focus:border-[#0f4a29]"
                           />
                         </td>
-                        <td className="py-1.5 px-2">
+                        <td className="py-1.5 px-2 align-top">
                           <input
                             type="number"
                             value={r.rate}
@@ -954,10 +919,10 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                             className="w-full bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-right focus:outline-none focus:border-[#0f4a29]"
                           />
                         </td>
-                        <td className="py-1.5 pl-2 text-right font-extrabold">
+                        <td className="py-1.5 pl-2 text-right font-extrabold align-top">
                           {fmtINR((Number(r.qty) || 0) * (Number(r.rate) || 0))}
                         </td>
-                        <td className="py-1.5 pl-1 no-print">
+                        <td className="py-1.5 pl-1 no-print align-top">
                           <button
                             onClick={() => removeRow(r.id)}
                             className="text-slate-300 hover:text-rose-500"
@@ -973,11 +938,10 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                   onClick={addRow}
                   className="no-print mt-2 flex items-center gap-1 text-[11px] font-extrabold text-[#0f4a29] dark:text-[#52b788]"
                 >
-                  <Plus className="w-3.5 h-3.5" /> Add Line Item
+                  <Plus className="w-3.5 h-3.5" /> Add Medicine Line
                 </button>
               </div>
 
-              {/* Totals */}
               <div className="flex justify-end">
                 <div className="w-full sm:w-72 space-y-1.5 text-xs font-medium">
                   <div className="flex justify-between">
@@ -1030,7 +994,6 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                 </div>
               </div>
 
-              {/* Payment method + notes */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs font-medium border-t border-slate-100 dark:border-slate-800 pt-4">
                 <div>
                   <div className="text-slate-400 text-[10px] uppercase font-bold mb-1">
@@ -1055,13 +1018,12 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                   <input
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
-                    placeholder="e.g. Next visit date"
+                    placeholder="e.g. Doctor / prescription reference"
                     className="w-full bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-[#0f4a29]"
                   />
                 </div>
               </div>
 
-              {/* Signature */}
               <div className="flex justify-end pt-8">
                 <div className="text-center">
                   <div className="w-40 border-t border-slate-400 dark:border-slate-600 pt-1 text-[11px] font-bold text-slate-500">
@@ -1070,7 +1032,6 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                 </div>
               </div>
 
-              {/* Footer: clinic name + address */}
               <div className="text-center border-t border-slate-200 dark:border-slate-800 pt-3">
                 <p className="text-[11px] font-extrabold text-slate-600 dark:text-slate-300">
                   {CLINIC.footerName}
@@ -1080,7 +1041,6 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                 </p>
               </div>
 
-              {/* Actions */}
               <div className="no-print flex flex-wrap justify-end gap-2 pt-2">
                 <button
                   onClick={onClose}

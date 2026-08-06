@@ -311,12 +311,23 @@ model Category {
   medicines medicine[]
 }
 
+// Which broad category of medicine/item this is — separate from `Category`
+// (which is a free-text, admin-defined grouping like "Antibiotics" or "Pain
+// Relief"). This is a fixed, clinic-wide classification used for filtering
+// and reporting across the whole inventory.
+enum MedicineType {
+  GENERIC // Generic / allopathic medicines
+  AYURVEDIC // Ayurvedic medicines
+  SURGICAL // Surgery-related items (dressings, sutures, disposables, etc.)
+}
+
 model medicine {
-  id            String  @id @default(cuid())
-  serialNumber  String  @unique
+  id            String       @id @default(cuid())
+  serialNumber  String       @unique
   drugName      String
   genericName   String?
   categoryId    String
+  medicineType  MedicineType @default(GENERIC)
   manufacturer  String?
   batchNumber   String
   purchasePrice Float

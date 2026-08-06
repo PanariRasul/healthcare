@@ -1,7 +1,7 @@
 // server/src/Invoice/invoice.controller.js
 import prisma from "../lib/prisma.js";
 
-const TYPE_VALUES = ["OPD", "IPD"];
+const TYPE_VALUES = ["OPD", "IPD", "PHARMACY"];
 const PREFIX = "VPC"; // clinic prefix — change here if the clinic name changes
 
 function isValidType(t) {
@@ -32,11 +32,9 @@ export async function previewNextInvoiceNumber(req, res) {
   try {
     const { patientType } = req.params;
     if (!isValidType(patientType)) {
-      return res
-        .status(400)
-        .json({
-          message: `patientType must be one of: ${TYPE_VALUES.join(", ")}`,
-        });
+      return res.status(400).json({
+        message: `patientType must be one of: ${TYPE_VALUES.join(", ")}`,
+      });
     }
     const invoiceNumber = await generateInvoiceNumber(patientType);
     res.json({ invoiceNumber });
@@ -51,11 +49,9 @@ export async function listPatientInvoices(req, res) {
   try {
     const { patientType, patientId } = req.params;
     if (!isValidType(patientType)) {
-      return res
-        .status(400)
-        .json({
-          message: `patientType must be one of: ${TYPE_VALUES.join(", ")}`,
-        });
+      return res.status(400).json({
+        message: `patientType must be one of: ${TYPE_VALUES.join(", ")}`,
+      });
     }
     const invoices = await prisma.invoice.findMany({
       where: { patientType, patientId },
@@ -164,11 +160,9 @@ export async function createInvoice(req, res) {
     const resolvedCreatedByName = req.user?.fullName || createdByName || null;
 
     if (!isValidType(patientType)) {
-      return res
-        .status(400)
-        .json({
-          message: `patientType must be one of: ${TYPE_VALUES.join(", ")}`,
-        });
+      return res.status(400).json({
+        message: `patientType must be one of: ${TYPE_VALUES.join(", ")}`,
+      });
     }
     if (!patientId || !patientName) {
       return res

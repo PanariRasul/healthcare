@@ -15,6 +15,7 @@ import {
   Trash2,
   AlertTriangle,
   Receipt,
+  ArrowRightLeft,
 } from "lucide-react";
 import { SectionCard, StatusBadge, PageHeader } from "../../components/UI";
 import InvoiceModal from "../../components/InvoiceModal";
@@ -56,6 +57,7 @@ export default function OPDPatientDetails({
   const [rxError, setRxError] = useState("");
   const [deletingRxId, setDeletingRxId] = useState(null);
   const [invoicing, setInvoicing] = useState(false);
+  const [movingToIPD, setMovingToIPD] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -86,6 +88,27 @@ export default function OPDPatientDetails({
   }, []);
 
   if (!p) return null;
+
+  const handleMoveToIPD = async () => {
+    const confirmed = window.confirm(
+      `Move ${p.name} from OPD to IPD? This admits them as an inpatient and removes this record from the OPD list.`,
+    );
+    if (!confirmed) return;
+
+    setMovingToIPD(true);
+    setError("");
+    try {
+      await api.post(`/opd/patients/${p.id}/move-to-ipd`, {});
+      // Patient no longer exists in OPD once moved, so go back to the list
+      // (its refresh-on-return will drop it) instead of trying to re-render
+      // this page against a record that's gone.
+      onBack();
+    } catch (err) {
+      setError(err.message || "Could not move patient to IPD.");
+    } finally {
+      setMovingToIPD(false);
+    }
+  };
 
   const persist = async (patch) => {
     const { patient: updated } = await api.put(`/opd/patients/${p.id}`, {
@@ -191,6 +214,18 @@ export default function OPDPatientDetails({
         subtitle={`OPD Token: #${p.serialNumber || "—"}`}
         action={
           <div className="flex items-center gap-2">
+            <button
+              onClick={handleMoveToIPD}
+              disabled={movingToIPD}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-xs font-extrabold shadow-xs"
+            >
+              {movingToIPD ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <ArrowRightLeft className="w-4 h-4" />
+              )}
+              Move to IPD
+            </button>
             <button
               onClick={() => setInvoicing(true)}
               className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#0f4a29] hover:bg-[#165a34] text-white text-xs font-extrabold shadow-xs"
@@ -367,6 +402,7 @@ export default function OPDPatientDetails({
             </div>
           </div>
         </SectionCard>
+        
       </div>
     </div>
   );

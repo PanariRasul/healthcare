@@ -11,6 +11,7 @@ import {
   deletePatient,
   createPrescription,
   deletePrescription,
+  moveToIPD,
 } from "./opd.controller.js";
 
 const router = Router();
@@ -34,5 +35,8 @@ router.delete("/:id", deletePatient);
 // Structured prescriptions — both doctors and receptionists can add these.
 router.post("/:id/prescriptions", createPrescription);
 router.delete("/:id/prescriptions/:itemId", deletePrescription);
+
+// Admits this OPD patient into IPD (creates the IPD record, removes the OPD one).
+router.post("/:id/move-to-ipd", moveToIPD);
 
 export default router;

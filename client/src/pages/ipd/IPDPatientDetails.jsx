@@ -145,6 +145,15 @@ export default function IPDPatientDetails({
         }
       />
 
+      {p.fromOPD && (
+        <div className="-mt-4">
+          <span className="inline-flex items-center gap-1.5 text-[11px] font-extrabold uppercase px-3 py-1 rounded-full bg-violet-100 text-violet-700 border border-violet-200">
+            <span className="w-2 h-2 rounded-full bg-violet-500" />
+            Moved from OPD
+          </span>
+        </div>
+      )}
+
       {invoicing && (
         <InvoiceModal
           type="IPD"

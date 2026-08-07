@@ -1,7 +1,7 @@
 // server/src/Invoice/invoice.controller.js
 import prisma from "../lib/prisma.js";
 
-const TYPE_VALUES = ["OPD", "IPD"];
+const TYPE_VALUES = ["OPD", "IPD", "PHARMACY"];
 const PREFIX = "VPC"; // clinic prefix — change here if the clinic name changes
 
 function isValidType(t) {
@@ -32,11 +32,9 @@ export async function previewNextInvoiceNumber(req, res) {
   try {
     const { patientType } = req.params;
     if (!isValidType(patientType)) {
-      return res
-        .status(400)
-        .json({
-          message: `patientType must be one of: ${TYPE_VALUES.join(", ")}`,
-        });
+      return res.status(400).json({
+        message: `patientType must be one of: ${TYPE_VALUES.join(", ")}`,
+      });
     }
     const invoiceNumber = await generateInvoiceNumber(patientType);
     res.json({ invoiceNumber });
@@ -51,11 +49,9 @@ export async function listPatientInvoices(req, res) {
   try {
     const { patientType, patientId } = req.params;
     if (!isValidType(patientType)) {
-      return res
-        .status(400)
-        .json({
-          message: `patientType must be one of: ${TYPE_VALUES.join(", ")}`,
-        });
+      return res.status(400).json({
+        message: `patientType must be one of: ${TYPE_VALUES.join(", ")}`,
+      });
     }
     const invoices = await prisma.invoice.findMany({
       where: { patientType, patientId },
@@ -64,6 +60,40 @@ export async function listPatientInvoices(req, res) {
     res.json(invoices);
   } catch (err) {
     console.error("listPatientInvoices error:", err);
+    res.status(500).json({ message: "Failed to fetch invoices" });
+  }
+}
+
+// GET /api/invoices/type/:patientType?search= -> every invoice of one type
+// (e.g. all "PHARMACY" invoices), newest first. Used by the Pharmacy
+// Billing list page — unlike listPatientInvoices above, this isn't scoped
+// to a single patient. `search` (optional) matches invoiceNumber or
+// patientName, case-insensitive.
+export async function listInvoicesByType(req, res) {
+  try {
+    const { patientType } = req.params;
+    const { search = "" } = req.query;
+    if (!isValidType(patientType)) {
+      return res.status(400).json({
+        message: `patientType must be one of: ${TYPE_VALUES.join(", ")}`,
+      });
+    }
+
+    const where = { patientType };
+    if (search.trim()) {
+      where.OR = [
+        { invoiceNumber: { contains: search.trim(), mode: "insensitive" } },
+        { patientName: { contains: search.trim(), mode: "insensitive" } },
+      ];
+    }
+
+    const invoices = await prisma.invoice.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+    });
+    res.json(invoices);
+  } catch (err) {
+    console.error("listInvoicesByType error:", err);
     res.status(500).json({ message: "Failed to fetch invoices" });
   }
 }
@@ -164,11 +194,9 @@ export async function createInvoice(req, res) {
     const resolvedCreatedByName = req.user?.fullName || createdByName || null;
 
     if (!isValidType(patientType)) {
-      return res
-        .status(400)
-        .json({
-          message: `patientType must be one of: ${TYPE_VALUES.join(", ")}`,
-        });
+      return res.status(400).json({
+        message: `patientType must be one of: ${TYPE_VALUES.join(", ")}`,
+      });
     }
     if (!patientId || !patientName) {
       return res

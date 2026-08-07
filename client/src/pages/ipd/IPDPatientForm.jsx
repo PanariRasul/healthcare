@@ -30,6 +30,8 @@ import {
   Trash2,
   AlertTriangle,
   Bell,
+  Wallet,
+  Clock,
 } from "lucide-react";
 
 const DOC_TYPES = [
@@ -61,6 +63,13 @@ const defaultForm = {
     },
   ],
   medicines: [],
+  // Flexible "add a section" charges — Dialysis, Doctor Consultation, Lab
+  // Tests, Consumables, Procedures, Other Services, etc. Each one is either
+  // a flat One-Time amount, or a Per-Day rate that auto-multiplies by the
+  // number of days admitted (admission date -> discharge date, or today if
+  // still admitted) — same idea as the Daily/Room Charges above, just for
+  // charge categories that aren't the room rate itself.
+  additionalCharges: [],
   oil: "0",
   protein: "0",
   syrup: "0",
@@ -80,6 +89,17 @@ const defaultForm = {
 
 const toDateInput = (d) => (d ? new Date(d).toISOString().split("T")[0] : "");
 
+// Days between admission and discharge (or today, if still admitted) — used
+// to auto-calculate Per-Day charges. Always at least 1 so a same-day
+// admission still bills a full day.
+const daysAdmitted = (admissionDate, dischargeDate) => {
+  if (!admissionDate) return 1;
+  const start = new Date(admissionDate);
+  const end = dischargeDate ? new Date(dischargeDate) : new Date();
+  const diff = Math.ceil((end - start) / (1000 * 60 * 60 * 24));
+  return Math.max(diff, 1);
+};
+
 export default function IPDPatientForm({ editPatient, onDone }) {
   const [form, setForm] = useState(
     editPatient
@@ -93,6 +113,10 @@ export default function IPDPatientForm({ editPatient, onDone }) {
             date: toDateInput(c.date),
           })),
           medicines: editPatient.medicines || [],
+          additionalCharges: (editPatient.additionalCharges || []).map((c) => ({
+            ...c,
+            rate: c.rate ?? "",
+          })),
           followUpDate: toDateInput(editPatient.followUpDate),
           condition: editPatient.condition || "",
           followUpDesc: editPatient.followUpDesc || "",
@@ -169,11 +193,55 @@ export default function IPDPatientForm({ editPatient, onDone }) {
       ...f,
       dailyCharges: f.dailyCharges.filter((_, idx) => idx !== i),
     }));
+  // Fills a daily-charge row's Days field from the admission/discharge
+  // dates instead of typing it by hand.
+  const autoFillChargeDays = (i) => {
+    const days = daysAdmitted(form.admissionDate, form.dischargeDate);
+    updateCharge(i, "days", String(days));
+  };
 
   const totalStay = form.dailyCharges.reduce(
     (s, p) => s + (parseFloat(p.amount) || 0),
     0,
   );
+
+  // ---- Additional Charges (Dialysis, Doctor Consultation, Lab Tests, etc.) ----
+  const addAdditionalCharge = () =>
+    setForm((f) => ({
+      ...f,
+      additionalCharges: [
+        ...f.additionalCharges,
+        {
+          id: `temp-${Date.now()}`,
+          label: "",
+          chargeType: "ONE_TIME",
+          rate: "",
+        },
+      ],
+    }));
+  const updateAdditionalCharge = (id, field, val) =>
+    setForm((f) => ({
+      ...f,
+      additionalCharges: f.additionalCharges.map((c) =>
+        c.id === id ? { ...c, [field]: val } : c,
+      ),
+    }));
+  const removeAdditionalCharge = (id) =>
+    setForm((f) => ({
+      ...f,
+      additionalCharges: f.additionalCharges.filter((c) => c.id !== id),
+    }));
+
+  const admittedDays = daysAdmitted(form.admissionDate, form.dischargeDate);
+  const additionalChargeAmount = (c) =>
+    c.chargeType === "PER_DAY"
+      ? admittedDays * (parseFloat(c.rate) || 0)
+      : parseFloat(c.rate) || 0;
+  const additionalChargesTotal = form.additionalCharges.reduce(
+    (s, c) => s + additionalChargeAmount(c),
+    0,
+  );
+  const grandEstimatedTotal = totalStay + additionalChargesTotal;
 
   const selectedMedicine = medicinesList.find(
     (m) => m.id === selectedMedicineId,
@@ -234,6 +302,15 @@ export default function IPDPatientForm({ editPatient, onDone }) {
         rate: parseFloat(c.rate) || 0,
         amount: parseFloat(c.amount) || 0,
       })),
+      additionalCharges: form.additionalCharges
+        .filter((c) => c.label.trim())
+        .map((c) => ({
+          label: c.label.trim(),
+          chargeType: c.chargeType,
+          rate: parseFloat(c.rate) || 0,
+          days: c.chargeType === "PER_DAY" ? admittedDays : 0,
+          amount: additionalChargeAmount(c),
+        })),
       medicines: form.medicines.map((m) => ({
         medicineId: m.medicineId || null,
         name: m.name,
@@ -348,6 +425,228 @@ export default function IPDPatientForm({ editPatient, onDone }) {
           </div>
         </SectionCard>
 
+        <SectionCard title="Daily / Room Charges" icon={Clock}>
+          <div className="space-y-3">
+            <p className="text-xs text-slate-400 font-medium">
+              Room / admission charge per day — e.g. ₹6,500/day for 4 days
+              admitted auto-totals to ₹26,000. Click "Auto" to fill Days from
+              the admission &amp; discharge dates above.
+            </p>
+            {form.dailyCharges.map((c, i) => (
+              <div
+                key={c.id}
+                className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_1fr_1fr_auto_auto] gap-2 items-end bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-slate-800 p-3"
+              >
+                <div>
+                  <label className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
+                    From Date
+                  </label>
+                  <input
+                    type="date"
+                    value={c.date}
+                    onChange={(e) => updateCharge(i, "date", e.target.value)}
+                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-2.5 py-1.5 text-xs font-medium text-slate-800 dark:text-white focus:outline-none focus:border-[#0f4a29]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
+                    Days
+                  </label>
+                  <div className="flex gap-1">
+                    <input
+                      type="number"
+                      value={c.days}
+                      onChange={(e) => updateCharge(i, "days", e.target.value)}
+                      placeholder="0"
+                      className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-2.5 py-1.5 text-xs font-medium text-slate-800 dark:text-white focus:outline-none focus:border-[#0f4a29]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => autoFillChargeDays(i)}
+                      title="Fill from admission/discharge dates"
+                      className="shrink-0 px-2.5 rounded-xl bg-slate-100 dark:bg-slate-700 text-[10px] font-extrabold text-slate-600 dark:text-slate-300"
+                    >
+                      Auto
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
+                    Rate / Day (₹)
+                  </label>
+                  <input
+                    type="number"
+                    value={c.rate}
+                    onChange={(e) => updateCharge(i, "rate", e.target.value)}
+                    placeholder="0.00"
+                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-2.5 py-1.5 text-xs font-medium text-slate-800 dark:text-white focus:outline-none focus:border-[#0f4a29]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
+                    Amount (Auto)
+                  </label>
+                  <div className="bg-[#0f4a29]/10 border border-[#0f4a29]/20 rounded-xl px-2.5 py-1.5 text-xs font-extrabold text-[#0f4a29] dark:text-[#52b788]">
+                    ₹{(parseFloat(c.amount) || 0).toLocaleString()}
+                  </div>
+                </div>
+                <div className="sm:col-span-2 flex justify-end gap-2">
+                  {form.dailyCharges.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeCharge(i)}
+                      className="text-rose-500 p-2"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={addCharge}
+              className="flex items-center gap-1.5 text-xs font-extrabold text-[#0f4a29] dark:text-[#52b788]"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add Another Rate Period
+            </button>
+            <div className="flex justify-end pt-2 border-t border-slate-100 dark:border-slate-800">
+              <div className="text-xs font-bold text-slate-500">
+                Room Charges Total:{" "}
+                <span className="text-sm font-extrabold text-slate-900 dark:text-white">
+                  ₹{totalStay.toLocaleString()}
+                </span>
+              </div>
+            </div>
+          </div>
+        </SectionCard>
+
+        <SectionCard title="Additional Charges" icon={Wallet}>
+          <div className="space-y-3">
+            <p className="text-xs text-slate-400 font-medium">
+              Add a section for anything else billable — Dialysis, Doctor
+              Consultation, Lab Tests, Consumables, Procedures, Ambulance,
+              Oxygen, ICU, etc. Choose <strong>One-Time</strong> for a flat
+              charge, or <strong>Per Day</strong> to auto-multiply by the{" "}
+              {admittedDays} day{admittedDays === 1 ? "" : "s"} admitted so far
+              (admission → discharge date, or today if still admitted).
+            </p>
+
+            {form.additionalCharges.length === 0 ? (
+              <p className="text-xs text-slate-400 font-medium py-4 text-center bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800">
+                No additional charges added yet.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {form.additionalCharges.map((c) => {
+                  const isPerDay = c.chargeType === "PER_DAY";
+                  const amount = additionalChargeAmount(c);
+                  return (
+                    <div
+                      key={c.id}
+                      className="grid grid-cols-1 sm:grid-cols-[1.5fr_auto_1fr_1fr_auto] gap-2 items-end bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-slate-800 p-3"
+                    >
+                      <div>
+                        <label className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
+                          Charge Label
+                        </label>
+                        <input
+                          value={c.label}
+                          onChange={(e) =>
+                            updateAdditionalCharge(
+                              c.id,
+                              "label",
+                              e.target.value,
+                            )
+                          }
+                          placeholder="e.g. Dialysis Charges"
+                          className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-2.5 py-1.5 text-xs font-medium text-slate-800 dark:text-white focus:outline-none focus:border-[#0f4a29]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
+                          Type
+                        </label>
+                        <div className="flex gap-1">
+                          {[
+                            { v: "ONE_TIME", label: "One-Time" },
+                            { v: "PER_DAY", label: "Per Day" },
+                          ].map((opt) => (
+                            <button
+                              key={opt.v}
+                              type="button"
+                              onClick={() =>
+                                updateAdditionalCharge(
+                                  c.id,
+                                  "chargeType",
+                                  opt.v,
+                                )
+                              }
+                              className={`px-2.5 py-1.5 rounded-xl text-[10px] font-extrabold border transition-all whitespace-nowrap ${
+                                c.chargeType === opt.v
+                                  ? "bg-[#0f4a29] text-white border-[#0f4a29]"
+                                  : "bg-white dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700"
+                              }`}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
+                          {isPerDay ? "Rate / Day (₹)" : "Amount (₹)"}
+                        </label>
+                        <input
+                          type="number"
+                          value={c.rate}
+                          onChange={(e) =>
+                            updateAdditionalCharge(c.id, "rate", e.target.value)
+                          }
+                          placeholder="0.00"
+                          className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-2.5 py-1.5 text-xs font-medium text-slate-800 dark:text-white focus:outline-none focus:border-[#0f4a29]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
+                          {isPerDay ? `× ${admittedDays} days` : "Total"}
+                        </label>
+                        <div className="bg-[#0f4a29]/10 border border-[#0f4a29]/20 rounded-xl px-2.5 py-1.5 text-xs font-extrabold text-[#0f4a29] dark:text-[#52b788]">
+                          ₹{amount.toLocaleString()}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeAdditionalCharge(c.id)}
+                        className="text-rose-500 p-2 justify-self-end"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={addAdditionalCharge}
+              className="flex items-center gap-1.5 text-xs font-extrabold text-[#0f4a29] dark:text-[#52b788]"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add Charge Section
+            </button>
+
+            <div className="flex justify-end pt-2 border-t border-slate-100 dark:border-slate-800">
+              <div className="text-xs font-bold text-slate-500">
+                Additional Charges Total:{" "}
+                <span className="text-sm font-extrabold text-slate-900 dark:text-white">
+                  ₹{additionalChargesTotal.toLocaleString()}
+                </span>
+              </div>
+            </div>
+          </div>
+        </SectionCard>
+
         <SectionCard title="Prescribed Medicines" icon={Pill}>
           <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -442,6 +741,36 @@ export default function IPDPatientForm({ editPatient, onDone }) {
               onChange={set("card")}
               placeholder="0.00"
             />
+          </div>
+
+          {/* Live estimate — Room Charges + Additional Charges. The actual
+              saved totalStay is computed server-side; this is a preview so
+              staff can sanity-check before submitting. */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+            <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-3 border border-slate-100 dark:border-slate-800">
+              <div className="text-[10px] font-bold uppercase text-slate-400">
+                Room Charges
+              </div>
+              <div className="font-extrabold text-sm text-slate-900 dark:text-white">
+                ₹{totalStay.toLocaleString()}
+              </div>
+            </div>
+            <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-3 border border-slate-100 dark:border-slate-800">
+              <div className="text-[10px] font-bold uppercase text-slate-400">
+                Additional Charges
+              </div>
+              <div className="font-extrabold text-sm text-slate-900 dark:text-white">
+                ₹{additionalChargesTotal.toLocaleString()}
+              </div>
+            </div>
+            <div className="bg-[#0f4a29]/10 rounded-2xl p-3 border border-[#0f4a29]/20">
+              <div className="text-[10px] font-bold uppercase text-slate-400">
+                Estimated Total Bill
+              </div>
+              <div className="font-extrabold text-sm text-[#0f4a29] dark:text-[#52b788]">
+                ₹{grandEstimatedTotal.toLocaleString()}
+              </div>
+            </div>
           </div>
         </SectionCard>
 

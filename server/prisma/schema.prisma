@@ -172,10 +172,11 @@ model IPD_Patient {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  dailyCharges IPD_DailyCharge[]
-  documents    IPD_Document[]
-  medicines    IPD_Medicine[]
-  payments     IPD_Payment[]
+  dailyCharges      IPD_DailyCharge[]
+  documents         IPD_Document[]
+  medicines         IPD_Medicine[]
+  payments          IPD_Payment[]
+  additionalCharges IPD_AdditionalCharge[]
 
   @@map("ipd_patients")
 }
@@ -191,6 +192,34 @@ model IPD_DailyCharge {
   patient   IPD_Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
 
   @@map("ipd_daily_charges")
+}
+
+// Flexible "add a charge section" — covers Dialysis, Doctor Consultation,
+// Lab Tests, Consumables, Procedures, Other Services, etc. without needing
+// a dedicated model + migration per category. `label` is free text (same
+// pattern as Employee.designation elsewhere in this schema) so new charge
+// types never need a schema change.
+enum IpdChargeType {
+  ONE_TIME
+  PER_DAY
+}
+
+model IPD_AdditionalCharge {
+  id         String        @id @default(cuid())
+  patientId  String
+  label      String // e.g. "Dialysis Charges", "Doctor Consultation", "Lab Tests"
+  chargeType IpdChargeType @default(ONE_TIME)
+  rate       Float // one-time amount, or the per-day rate when chargeType = PER_DAY
+  // Snapshot of the day-count used to compute `amount` at save time (only
+  // meaningful when chargeType = PER_DAY). Stored rather than recomputed
+  // live so past invoices don't silently change if the patient's admission
+  // or discharge date is edited later.
+  days      Float       @default(0)
+  amount    Float // = rate when ONE_TIME, = rate * days when PER_DAY
+  createdAt DateTime    @default(now())
+  patient   IPD_Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@map("ipd_additional_charges")
 }
 
 model IPD_Medicine {
@@ -311,12 +340,23 @@ model Category {
   medicines medicine[]
 }
 
+// Which broad category of medicine/item this is — separate from `Category`
+// (which is a free-text, admin-defined grouping like "Antibiotics" or "Pain
+// Relief"). This is a fixed, clinic-wide classification used for filtering
+// and reporting across the whole inventory.
+enum MedicineType {
+  GENERIC // Generic / allopathic medicines
+  AYURVEDIC // Ayurvedic medicines
+  SURGICAL // Surgery-related items (dressings, sutures, disposables, etc.)
+}
+
 model medicine {
-  id            String  @id @default(cuid())
-  serialNumber  String  @unique
+  id            String       @id @default(cuid())
+  serialNumber  String       @unique
   drugName      String
   genericName   String?
   categoryId    String
+  medicineType  MedicineType @default(GENERIC)
   manufacturer  String?
   batchNumber   String
   purchasePrice Float

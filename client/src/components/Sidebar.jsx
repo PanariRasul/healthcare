@@ -25,6 +25,7 @@ import {
   Fingerprint,
   Briefcase,
   ActivitySquare,
+  Receipt,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 
@@ -34,6 +35,7 @@ const menuConfig = {
     { label: "Register Patient", icon: UserPlus, to: "/opd/register" },
     { label: "All Patients", icon: Users, to: "/opd/patients" },
     { label: "Follow-Ups", icon: CalendarClock, to: "/opd/followups" },
+    { label: "Pharmacy Billing", icon: Receipt, to: "/opd/pharmacy-billing" },
   ],
   "receptionist-IPD": [
     { label: "Dashboard", icon: LayoutDashboard, to: "/ipd-dashboard" },
@@ -41,21 +43,33 @@ const menuConfig = {
     { label: "All Patients", icon: Users, to: "/ipd/patients" },
     { label: "Payments", icon: Wallet, to: "/ipd/payments" },
     { label: "Follow Ups", icon: CalendarClock, to: "/ipd/followups" },
+    { label: "Pharmacy Billing", icon: Receipt, to: "/ipd/pharmacy-billing" },
   ],
   "doctor-OPD": [
     { label: "Dashboard", icon: LayoutDashboard, to: "/doctor/opd/dashboard" },
     { label: "OPD Patients", icon: Stethoscope, to: "/doctor/opd/patients" },
     { label: "Follow-Ups", icon: CalendarClock, to: "/doctor/opd/followups" },
+    {
+      label: "Pharmacy Billing",
+      icon: Receipt,
+      to: "/doctor/opd/pharmacy-billing",
+    },
   ],
   "doctor-IPD": [
     { label: "Dashboard", icon: LayoutDashboard, to: "/doctor/ipd/dashboard" },
     { label: "IPD Patients", icon: BedDouble, to: "/doctor/ipd" },
     { label: "Follow-Ups", icon: CalendarClock, to: "/doctor/ipd/followups" },
+    {
+      label: "Pharmacy Billing",
+      icon: Receipt,
+      to: "/doctor/ipd/pharmacy-billing",
+    },
   ],
   "pharmacy-Pharmacy": [
     { label: "Dashboard", icon: LayoutDashboard, to: "/pharmacy-dashboard" },
     { label: "Add Medicine", icon: Plus, to: "/pharmacy/add" },
     { label: "All Medicines", icon: Pill, to: "/pharmacy/medicines" },
+    { label: "Billing", icon: Receipt, to: "/pharmacy/billing" },
     { label: "Stock History", icon: History, to: "/pharmacy/stock" },
     { label: "Expiry Alerts", icon: Clock, to: "/pharmacy/expiry" },
   ],
@@ -71,9 +85,14 @@ const menuConfig = {
       label: "Pharmacy",
       icon: Pill,
       children: [
-        { label: "Dashboard", icon: LayoutDashboard, to: "/admin/pharmacy-dashboard" },
+        {
+          label: "Dashboard",
+          icon: LayoutDashboard,
+          to: "/admin/pharmacy-dashboard",
+        },
         { label: "Add Medicine", icon: Plus, to: "/admin/pharmacy/add" },
         { label: "All Medicines", icon: Pill, to: "/admin/pharmacy/medicines" },
+        { label: "Billing", icon: Receipt, to: "/admin/pharmacy/billing" },
         { label: "Stock History", icon: History, to: "/admin/pharmacy/stock" },
         { label: "Expiry Alerts", icon: Clock, to: "/admin/pharmacy/expiry" },
         { label: "Analytics", icon: ActivitySquare, to: "/admin/pharmacy" },
@@ -88,6 +107,8 @@ const menuConfig = {
   ],
   "manager-MANAGER": [
     { label: "Dashboard", icon: LayoutDashboard, to: "/manager/dashboard" },
+    { label: "Employee Directory", icon: Building2, to: "/manager/employees" },
+    { label: "Biometric Mgmt", icon: Fingerprint, to: "/manager/biometric" },
     { label: "Shift Assignment", icon: UserPlus, to: "/manager/shift-assign" },
   ],
 };
@@ -153,7 +174,15 @@ export default function Sidebar({ collapsed, setCollapsed }) {
           ? "MANAGER"
           : "";
   const key = user ? `${user.role}-${contextForKey}` : "";
-  const links = menuConfig[key] || [];
+  const rawLinks = menuConfig[key] || [];
+  // Pharmacy tab only shows for admins whose phone is in the
+  // PHARMACY_ADMIN_PHONES allowlist (flag comes from the backend as
+  // user.canAccessPharmacy — see auth.controller.js toSafeUser()). Every
+  // other admin sees everything except Pharmacy.
+  const links =
+    isAdmin && !user?.canAccessPharmacy
+      ? rawLinks.filter((l) => l.label !== "Pharmacy")
+      : rawLinks;
 
   const handleModuleSwitch = (mod) => {
     if (!user || mod === activeModule) return;
@@ -271,7 +300,10 @@ export default function Sidebar({ collapsed, setCollapsed }) {
                             navigate(link.children[0].to);
                             return;
                           }
-                          setOpenGroups((o) => ({ ...o, [link.label]: !isOpen }));
+                          setOpenGroups((o) => ({
+                            ...o,
+                            [link.label]: !isOpen,
+                          }));
                         }}
                         className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition-all group relative ${
                           mini ? "justify-center px-0" : ""
@@ -333,7 +365,9 @@ export default function Sidebar({ collapsed, setCollapsed }) {
                                             : "text-[#9ca3af]"
                                         }`}
                                       />
-                                      <span className="truncate">{child.label}</span>
+                                      <span className="truncate">
+                                        {child.label}
+                                      </span>
                                     </>
                                   )}
                                 </NavLink>

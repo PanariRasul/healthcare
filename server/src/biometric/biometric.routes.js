@@ -15,19 +15,29 @@ router.post("/punch", biometric.punch);
 // Everything below at minimum requires an authenticated user.
 router.use(requireAuth);
 
-// Working Timings & Shift Management — READ access only is opened up to
-// MANAGER too, since the Shift Assignment page (used by managers) needs to
-// populate its "assign to shift" dropdown. Mutating the shifts themselves
-// (create/edit/toggle/delete) stays ADMIN-only.
+// Working Timings & Shift Management — full access (read + create/edit/
+// toggle/delete) is now open to MANAGER as well as ADMIN. Managers own
+// Shift Assignment day-to-day, so they need to be able to manage the
+// underlying Shifts themselves, not just read them.
 router.get("/shifts", requireRole("ADMIN", "MANAGER"), shift.listShifts);
 router.get("/shifts/:id", requireRole("ADMIN", "MANAGER"), shift.getShift);
-router.post("/shifts", requireRole("ADMIN"), shift.createShift);
-router.put("/shifts/:id", requireRole("ADMIN"), shift.updateShift);
-router.patch("/shifts/:id/toggle", requireRole("ADMIN"), shift.toggleShift);
-router.delete("/shifts/:id", requireRole("ADMIN"), shift.deleteShift);
+router.post("/shifts", requireRole("ADMIN", "MANAGER"), shift.createShift);
+router.put("/shifts/:id", requireRole("ADMIN", "MANAGER"), shift.updateShift);
+router.patch(
+  "/shifts/:id/toggle",
+  requireRole("ADMIN", "MANAGER"),
+  shift.toggleShift,
+);
+router.delete(
+  "/shifts/:id",
+  requireRole("ADMIN", "MANAGER"),
+  shift.deleteShift,
+);
 
-// Everything else below stays ADMIN-only — same as before.
-router.use(requireRole("ADMIN"));
+// Everything else below (Dashboard, Devices, Mappings, Search, Logs,
+// Attendance) is now open to MANAGER too, giving Manager full access to
+// the Biometric Management module, same as Admin.
+router.use(requireRole("ADMIN", "MANAGER"));
 
 // Dashboard
 router.get("/dashboard", biometric.getDashboard);

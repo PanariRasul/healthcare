@@ -5,9 +5,13 @@ import {
   toDbStockAction,
   toDbUnitType,
   toDbStockUnit,
+  toDbMedicineType,
   computeStockBreakdown,
 } from "./pharmacy.mappers.js";
-import { clearStockReadMarks, clearExpiryReadMarks } from "../notifications/notifications.service.js";
+import {
+  clearStockReadMarks,
+  clearExpiryReadMarks,
+} from "../notifications/notifications.service.js";
 
 const MEDICINE_INCLUDE = { category: true, stockHistory: true };
 
@@ -34,7 +38,8 @@ export async function getMedicine(req, res) {
       where: { id: req.params.id },
       include: MEDICINE_INCLUDE,
     });
-    if (!medicine) return res.status(404).json({ message: "Medicine not found." });
+    if (!medicine)
+      return res.status(404).json({ message: "Medicine not found." });
     return res.status(200).json({ medicine: fromDbMedicine(medicine) });
   } catch (err) {
     console.error("Get medicine error:", err);
@@ -49,26 +54,54 @@ export async function getMedicine(req, res) {
 export async function createMedicine(req, res) {
   try {
     const {
-      serialNumber, drugName, genericName, category, manufacturer,
-      batchNumber, purchasePrice, sellingPrice, unitsPerPack, quantity, reorderLevel,
-      expiryDate, supplierName, notes,
-      unitType, sheetsPerBox, tabletsPerSheet, boxesPurchased,
+      serialNumber,
+      drugName,
+      genericName,
+      category,
+      medicineType,
+      manufacturer,
+      batchNumber,
+      purchasePrice,
+      sellingPrice,
+      unitsPerPack,
+      quantity,
+      reorderLevel,
+      expiryDate,
+      supplierName,
+      notes,
+      unitType,
+      sheetsPerBox,
+      tabletsPerSheet,
+      boxesPurchased,
     } = req.body;
 
-    if (!serialNumber || !drugName || !category || !batchNumber || !expiryDate) {
+    if (
+      !serialNumber ||
+      !drugName ||
+      !category ||
+      !batchNumber ||
+      !expiryDate
+    ) {
       return res.status(400).json({
-        message: "serialNumber, drugName, category, batchNumber, and expiryDate are required.",
+        message:
+          "serialNumber, drugName, category, batchNumber, and expiryDate are required.",
       });
     }
 
-    const categoryRow = await prisma.category.findUnique({ where: { name: category } });
+    const categoryRow = await prisma.category.findUnique({
+      where: { name: category },
+    });
     if (!categoryRow) {
       return res.status(400).json({ message: `Unknown category: ${category}` });
     }
 
-    const existingSerial = await prisma.medicine.findUnique({ where: { serialNumber } });
+    const existingSerial = await prisma.medicine.findUnique({
+      where: { serialNumber },
+    });
     if (existingSerial) {
-      return res.status(409).json({ message: "This Medicine ID is already in use." });
+      return res
+        .status(409)
+        .json({ message: "This Medicine ID is already in use." });
     }
 
     // --- Packing information: Box → Sheet → Tablet ---
@@ -88,7 +121,7 @@ export async function createMedicine(req, res) {
     // quantity), fall back to the legacy single `quantity` field so nothing
     // breaks.
     const initialQuantity =
-      boxesPurchasedNum > 0 ? totalTabletsNum : (parseInt(quantity, 10) || 0);
+      boxesPurchasedNum > 0 ? totalTabletsNum : parseInt(quantity, 10) || 0;
 
     const medicine = await prisma.medicine.create({
       data: {
@@ -96,6 +129,7 @@ export async function createMedicine(req, res) {
         drugName,
         genericName: genericName || null,
         categoryId: categoryRow.id,
+        medicineType: toDbMedicineType(medicineType),
         manufacturer: manufacturer || null,
         batchNumber,
         purchasePrice: parseFloat(purchasePrice) || 0,
@@ -125,7 +159,8 @@ export async function createMedicine(req, res) {
               quantity: initialQuantity,
               reason: "Initial stock entry",
               unit: boxesPurchasedNum > 0 ? "BOX" : null,
-              enteredQuantity: boxesPurchasedNum > 0 ? boxesPurchasedNum : initialQuantity,
+              enteredQuantity:
+                boxesPurchasedNum > 0 ? boxesPurchasedNum : initialQuantity,
             },
           ],
         },
@@ -147,21 +182,43 @@ export async function createMedicine(req, res) {
 // `quantity` field, it's intentionally ignored here.
 export async function updateMedicine(req, res) {
   try {
-    const existing = await prisma.medicine.findUnique({ where: { id: req.params.id } });
-    if (!existing) return res.status(404).json({ message: "Medicine not found." });
+    const existing = await prisma.medicine.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!existing)
+      return res.status(404).json({ message: "Medicine not found." });
 
     const {
-      serialNumber, drugName, genericName, category, manufacturer,
-      batchNumber, purchasePrice, sellingPrice, unitsPerPack, reorderLevel,
-      expiryDate, supplierName, notes,
-      unitType, sheetsPerBox, tabletsPerSheet, boxesPurchased,
+      serialNumber,
+      drugName,
+      genericName,
+      category,
+      medicineType,
+      manufacturer,
+      batchNumber,
+      purchasePrice,
+      sellingPrice,
+      unitsPerPack,
+      reorderLevel,
+      expiryDate,
+      supplierName,
+      notes,
+      unitType,
+      sheetsPerBox,
+      tabletsPerSheet,
+      boxesPurchased,
     } = req.body;
 
     const data = {};
     if (serialNumber !== undefined) {
       if (serialNumber !== existing.serialNumber) {
-        const dup = await prisma.medicine.findUnique({ where: { serialNumber } });
-        if (dup) return res.status(409).json({ message: "This Medicine ID is already in use." });
+        const dup = await prisma.medicine.findUnique({
+          where: { serialNumber },
+        });
+        if (dup)
+          return res
+            .status(409)
+            .json({ message: "This Medicine ID is already in use." });
       }
       data.serialNumber = serialNumber;
     }
@@ -169,13 +226,18 @@ export async function updateMedicine(req, res) {
     if (genericName !== undefined) data.genericName = genericName || null;
     if (manufacturer !== undefined) data.manufacturer = manufacturer || null;
     if (batchNumber !== undefined) data.batchNumber = batchNumber;
-    if (purchasePrice !== undefined) data.purchasePrice = parseFloat(purchasePrice) || 0;
-    if (sellingPrice !== undefined) data.sellingPrice = parseFloat(sellingPrice) || 0;
-    if (reorderLevel !== undefined) data.reorderLevel = parseInt(reorderLevel, 10) || 0;
+    if (purchasePrice !== undefined)
+      data.purchasePrice = parseFloat(purchasePrice) || 0;
+    if (sellingPrice !== undefined)
+      data.sellingPrice = parseFloat(sellingPrice) || 0;
+    if (reorderLevel !== undefined)
+      data.reorderLevel = parseInt(reorderLevel, 10) || 0;
     if (expiryDate !== undefined) data.expiryDate = new Date(expiryDate);
     if (supplierName !== undefined) data.supplierName = supplierName || null;
     if (notes !== undefined) data.notes = notes || null;
     if (unitType !== undefined) data.unitType = toDbUnitType(unitType);
+    if (medicineType !== undefined)
+      data.medicineType = toDbMedicineType(medicineType);
 
     // Packing config edits (e.g. fixing a typo'd sheets-per-box) never touch
     // `quantity` — the Box/Sheet/Tablet breakdown just recalculates itself
@@ -184,14 +246,22 @@ export async function updateMedicine(req, res) {
     // stats/valuation math and the "originally purchased" record stay
     // accurate for the new packing numbers.
     const packingChanged =
-      sheetsPerBox !== undefined || tabletsPerSheet !== undefined || boxesPurchased !== undefined;
+      sheetsPerBox !== undefined ||
+      tabletsPerSheet !== undefined ||
+      boxesPurchased !== undefined;
     if (packingChanged) {
       const sheetsPerBoxNum =
-        sheetsPerBox !== undefined ? Math.max(parseInt(sheetsPerBox, 10) || 1, 1) : existing.sheetsPerBox;
+        sheetsPerBox !== undefined
+          ? Math.max(parseInt(sheetsPerBox, 10) || 1, 1)
+          : existing.sheetsPerBox;
       const tabletsPerSheetNum =
-        tabletsPerSheet !== undefined ? Math.max(parseInt(tabletsPerSheet, 10) || 1, 1) : existing.tabletsPerSheet;
+        tabletsPerSheet !== undefined
+          ? Math.max(parseInt(tabletsPerSheet, 10) || 1, 1)
+          : existing.tabletsPerSheet;
       const boxesPurchasedNum =
-        boxesPurchased !== undefined ? Math.max(parseInt(boxesPurchased, 10) || 0, 0) : existing.boxesPurchased;
+        boxesPurchased !== undefined
+          ? Math.max(parseInt(boxesPurchased, 10) || 0, 0)
+          : existing.boxesPurchased;
 
       data.sheetsPerBox = sheetsPerBoxNum;
       data.tabletsPerSheet = tabletsPerSheetNum;
@@ -205,8 +275,13 @@ export async function updateMedicine(req, res) {
     }
 
     if (category !== undefined) {
-      const categoryRow = await prisma.category.findUnique({ where: { name: category } });
-      if (!categoryRow) return res.status(400).json({ message: `Unknown category: ${category}` });
+      const categoryRow = await prisma.category.findUnique({
+        where: { name: category },
+      });
+      if (!categoryRow)
+        return res
+          .status(400)
+          .json({ message: `Unknown category: ${category}` });
       data.categoryId = categoryRow.id;
     }
 
@@ -232,8 +307,11 @@ export async function updateMedicine(req, res) {
 // DELETE /api/pharmacy/medicines/:id
 export async function deleteMedicine(req, res) {
   try {
-    const existing = await prisma.medicine.findUnique({ where: { id: req.params.id } });
-    if (!existing) return res.status(404).json({ message: "Medicine not found." });
+    const existing = await prisma.medicine.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!existing)
+      return res.status(404).json({ message: "Medicine not found." });
 
     await prisma.medicine.delete({ where: { id: req.params.id } });
     return res.status(200).json({ message: "Medicine deleted." });
@@ -250,7 +328,9 @@ export async function deleteMedicine(req, res) {
 // comment in schema.prisma for the full reasoning.
 export async function getMedicineStats(req, res) {
   try {
-    const medicines = await prisma.medicine.findMany({ include: { category: true } });
+    const medicines = await prisma.medicine.findMany({
+      include: { category: true },
+    });
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -274,14 +354,19 @@ export async function getMedicineStats(req, res) {
     const expiringSoonItems = [];
 
     for (const m of medicines) {
-      const unitsPerPack = m.unitsPerPack && m.unitsPerPack > 0 ? m.unitsPerPack : 1;
+      const unitsPerPack =
+        m.unitsPerPack && m.unitsPerPack > 0 ? m.unitsPerPack : 1;
       const purchasePricePerUnit = m.purchasePrice / unitsPerPack;
       const sellingPricePerUnit = m.sellingPrice / unitsPerPack;
 
       totalPurchaseValue += purchasePricePerUnit * m.quantity;
       totalSellingValue += sellingPricePerUnit * m.quantity;
 
-      const breakdown = computeStockBreakdown(m.quantity, m.tabletsPerSheet, m.sheetsPerBox);
+      const breakdown = computeStockBreakdown(
+        m.quantity,
+        m.tabletsPerSheet,
+        m.sheetsPerBox,
+      );
       totalBoxes += breakdown.availableBoxes;
       totalSheets += breakdown.availableSheets;
       totalTablets += breakdown.availableTablets;
@@ -291,7 +376,10 @@ export async function getMedicineStats(req, res) {
       } else if (m.quantity <= m.reorderLevel) {
         lowStockCount += 1;
         lowStockItems.push({
-          id: m.id, drugName: m.drugName, quantity: m.quantity, reorderLevel: m.reorderLevel,
+          id: m.id,
+          drugName: m.drugName,
+          quantity: m.quantity,
+          reorderLevel: m.reorderLevel,
         });
       }
 
@@ -301,7 +389,9 @@ export async function getMedicineStats(req, res) {
       } else if (expiry <= thirtyDaysOut) {
         expiringSoonCount += 1;
         expiringSoonItems.push({
-          id: m.id, drugName: m.drugName, expiryDate: expiry.toISOString().split("T")[0],
+          id: m.id,
+          drugName: m.drugName,
+          expiryDate: expiry.toISOString().split("T")[0],
         });
       }
     }
@@ -313,7 +403,8 @@ export async function getMedicineStats(req, res) {
       totalCategories: categoryCount,
       totalPurchaseValue: Math.round(totalPurchaseValue * 100) / 100,
       totalSellingValue: Math.round(totalSellingValue * 100) / 100,
-      potentialProfit: Math.round((totalSellingValue - totalPurchaseValue) * 100) / 100,
+      potentialProfit:
+        Math.round((totalSellingValue - totalPurchaseValue) * 100) / 100,
       lowStockCount,
       outOfStockCount,
       expiredCount,
@@ -337,18 +428,28 @@ export async function addStockEntry(req, res) {
     const dbAction = toDbStockAction(action);
 
     if (!dbAction) {
-      return res.status(400).json({ message: "action must be one of: Add Stock, Reduce Stock, Stock Adjustment." });
+      return res
+        .status(400)
+        .json({
+          message:
+            "action must be one of: Add Stock, Reduce Stock, Stock Adjustment.",
+        });
     }
     const qty = parseInt(quantity, 10);
     if (!qty || qty <= 0) {
-      return res.status(400).json({ message: "Enter a valid positive quantity." });
+      return res
+        .status(400)
+        .json({ message: "Enter a valid positive quantity." });
     }
     if (!reason || !reason.trim()) {
       return res.status(400).json({ message: "A reason is required." });
     }
 
-    const medicine = await prisma.medicine.findUnique({ where: { id: req.params.id } });
-    if (!medicine) return res.status(404).json({ message: "Medicine not found." });
+    const medicine = await prisma.medicine.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!medicine)
+      return res.status(404).json({ message: "Medicine not found." });
 
     // Defaults to TABLET (i.e. "the number entered IS the tablet count")
     // when no unit is sent, so any older client still calling this endpoint
@@ -357,7 +458,11 @@ export async function addStockEntry(req, res) {
     const tabletsPerSheet = medicine.tabletsPerSheet || 1;
     const sheetsPerBox = medicine.sheetsPerBox || 1;
     const multiplier =
-      dbUnit === "BOX" ? tabletsPerSheet * sheetsPerBox : dbUnit === "SHEET" ? tabletsPerSheet : 1;
+      dbUnit === "BOX"
+        ? tabletsPerSheet * sheetsPerBox
+        : dbUnit === "SHEET"
+          ? tabletsPerSheet
+          : 1;
     // Everything from here on operates in tablets, same as before this
     // feature — only the multiplier used to get there is new.
     const qtyInTablets = qty * multiplier;
@@ -369,7 +474,9 @@ export async function addStockEntry(req, res) {
       historyQuantity = qtyInTablets;
     } else if (dbAction === "REDUCE") {
       if (qtyInTablets > medicine.quantity) {
-        return res.status(400).json({ message: "Cannot reduce more than current stock." });
+        return res
+          .status(400)
+          .json({ message: "Cannot reduce more than current stock." });
       }
       newQuantity = medicine.quantity - qtyInTablets;
       historyQuantity = -qtyInTablets;

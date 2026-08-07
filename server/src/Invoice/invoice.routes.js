@@ -3,6 +3,7 @@ import { Router } from "express";
 import {
   previewNextInvoiceNumber,
   listPatientInvoices,
+  listInvoicesByType,
   getInvoice,
   createInvoice,
   updateInvoice,
@@ -10,9 +11,10 @@ import {
 
 const router = Router();
 
-// Registered before "/:id" so "next"/"patient" aren't swallowed as an :id value
+// Registered before "/:id" so "next"/"patient"/"type" aren't swallowed as an :id value
 router.get("/next/:patientType", previewNextInvoiceNumber);
 router.get("/patient/:patientType/:patientId", listPatientInvoices);
+router.get("/type/:patientType", listInvoicesByType);
 
 router.get("/:id", getInvoice);
 router.post("/", createInvoice);

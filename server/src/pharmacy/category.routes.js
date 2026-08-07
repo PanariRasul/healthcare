@@ -1,6 +1,10 @@
 // server/src/pharmacy/category.routes.js
 import { Router } from "express";
-import { requireAuth, requireModule } from "../auth/auth.middleware.js";
+import {
+  requireAuth,
+  requireModule,
+  restrictPharmacyAdmin,
+} from "../auth/auth.middleware.js";
 import {
   listCategories,
   createCategory,
@@ -10,7 +14,10 @@ import {
 
 const router = Router();
 
-router.use(requireAuth, requireModule("PHARMACY"));
+// Categories only exist to power the Pharmacy medicine form/filtering —
+// nothing outside Pharmacy needs them, so the whole router is phone-gated
+// for admins.
+router.use(requireAuth, requireModule("PHARMACY"), restrictPharmacyAdmin);
 
 router.get("/", listCategories);
 router.post("/", createCategory);

@@ -6,7 +6,6 @@ import SplashCursor from "../../components/SplashCursor"; // Imported SplashCurs
 import {
   ShieldCheck,
   Stethoscope,
-  Pill,
   Building2,
   Lock,
   Smartphone,
@@ -22,12 +21,6 @@ const MODULES = [
     label: "OPD / IPD",
     description: "Reception & Doctor Console",
     icon: Stethoscope,
-  },
-  {
-    id: "Pharmacy",
-    label: "Pharmacy",
-    description: "Dispensary & Inventory",
-    icon: Pill,
   },
   {
     id: "ADMIN",
@@ -586,7 +579,7 @@ export default function Login() {
             <label className="text-[10px] font-extrabold uppercase tracking-widest text-[#7C8C82] block mb-2">
               Select module
             </label>
-            <div className="grid grid-cols-2 gap-2 sm:gap-2.5">
+            <div className="grid grid-cols-3 gap-2 sm:gap-2.5">
               {MODULES.map((m) => {
                 const Icon = m.icon;
                 const isActive = module === m.id;

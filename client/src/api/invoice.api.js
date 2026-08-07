@@ -22,6 +22,14 @@ export function fetchPatientInvoices(patientType, patientId) {
   );
 }
 
+// Every invoice of one type (e.g. all "PHARMACY" invoices), newest first —
+// not scoped to a single patient. Used by the Pharmacy Billing list page.
+// `search` (optional) matches invoice number or patient name.
+export function fetchInvoicesByType(patientType, search = "") {
+  const qs = search ? `?search=${encodeURIComponent(search)}` : "";
+  return fetch(`${INVOICES_URL}/type/${patientType}${qs}`).then(handle);
+}
+
 export function fetchInvoice(id) {
   return fetch(`${INVOICES_URL}/${id}`).then(handle);
 }

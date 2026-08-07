@@ -27,6 +27,24 @@ const UNIT_TYPE_TO_DB = Object.fromEntries(
   Object.entries(UNIT_TYPE_FROM_DB).map(([db, label]) => [label, db]),
 );
 
+// Broad classification, separate from the free-text Category. Fixed set of
+// three — see schema.prisma's MedicineType enum comment.
+const MEDICINE_TYPE_FROM_DB = {
+  GENERIC: "Generic Medicine",
+  AYURVEDIC: "Ayurvedic Medicine",
+  SURGICAL: "Surgery Related Item",
+};
+const MEDICINE_TYPE_TO_DB = Object.fromEntries(
+  Object.entries(MEDICINE_TYPE_FROM_DB).map(([db, label]) => [label, db]),
+);
+
+export function toDbMedicineType(displayType) {
+  return MEDICINE_TYPE_TO_DB[displayType] || "GENERIC";
+}
+export function fromDbMedicineType(dbType) {
+  return MEDICINE_TYPE_FROM_DB[dbType] || "Generic Medicine";
+}
+
 const STOCK_UNIT_FROM_DB = { BOX: "Box", SHEET: "Sheet", TABLET: "Tablet" };
 const STOCK_UNIT_TO_DB = { Box: "BOX", Sheet: "SHEET", Tablet: "TABLET" };
 
@@ -88,7 +106,11 @@ export function fromDbMedicine(medicine) {
   const tabletsPerSheet = medicine.tabletsPerSheet || 1;
   const sheetsPerBox = medicine.sheetsPerBox || 1;
   const tabletsPerBox = tabletsPerSheet * sheetsPerBox;
-  const breakdown = computeStockBreakdown(medicine.quantity, tabletsPerSheet, sheetsPerBox);
+  const breakdown = computeStockBreakdown(
+    medicine.quantity,
+    tabletsPerSheet,
+    sheetsPerBox,
+  );
 
   return {
     id: medicine.id,
@@ -96,6 +118,7 @@ export function fromDbMedicine(medicine) {
     drugName: medicine.drugName,
     genericName: medicine.genericName || "",
     category: medicine.category?.name || "",
+    medicineType: fromDbMedicineType(medicine.medicineType),
     manufacturer: medicine.manufacturer || "",
     batchNumber: medicine.batchNumber,
     purchasePrice: medicine.purchasePrice,
@@ -124,10 +147,18 @@ export function fromDbMedicine(medicine) {
     availableTablets: breakdown.availableTablets,
     // Purchase/selling price entered on the form are PER BOX. Derived
     // per-sheet/per-tablet prices, ready for future billing screens.
-    purchasePricePerSheet: sheetsPerBox ? medicine.purchasePrice / sheetsPerBox : medicine.purchasePrice,
-    purchasePricePerTablet: tabletsPerBox ? medicine.purchasePrice / tabletsPerBox : medicine.purchasePrice,
-    sellingPricePerSheet: sheetsPerBox ? medicine.sellingPrice / sheetsPerBox : medicine.sellingPrice,
-    sellingPricePerTablet: tabletsPerBox ? medicine.sellingPrice / tabletsPerBox : medicine.sellingPrice,
+    purchasePricePerSheet: sheetsPerBox
+      ? medicine.purchasePrice / sheetsPerBox
+      : medicine.purchasePrice,
+    purchasePricePerTablet: tabletsPerBox
+      ? medicine.purchasePrice / tabletsPerBox
+      : medicine.purchasePrice,
+    sellingPricePerSheet: sheetsPerBox
+      ? medicine.sellingPrice / sheetsPerBox
+      : medicine.sellingPrice,
+    sellingPricePerTablet: tabletsPerBox
+      ? medicine.sellingPrice / tabletsPerBox
+      : medicine.sellingPrice,
 
     stockHistory: (medicine.stockHistory || [])
       .slice()

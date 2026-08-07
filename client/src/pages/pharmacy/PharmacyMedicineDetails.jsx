@@ -117,6 +117,7 @@ export default function PharmacyMedicineDetails({
               { label: "Medicine ID", val: med.serialNumber },
               { label: "Drug Name", val: med.drugName },
               { label: "Generic Name", val: med.genericName },
+              { label: "Medicine Type", val: med.medicineType },
               { label: "Category", val: med.category },
               { label: "Manufacturer", val: med.manufacturer },
               { label: "Batch Number", val: med.batchNumber },
@@ -159,6 +160,32 @@ export default function PharmacyMedicineDetails({
                 {med.purchasePrice
                   ? `${(((med.sellingPrice - med.purchasePrice) / med.purchasePrice) * 100).toFixed(1)}%`
                   : "—"}
+              </div>
+            </div>
+          </div>
+
+          {/* Per-Sheet / Per-Tablet breakdown — already computed server-side
+              (see pharmacy.mappers.js fromDbMedicine), just surfaced here. */}
+          <div className="text-[10px] font-bold uppercase text-slate-400 mt-4 mb-2">
+            Per-Unit Cost (Box → Sheet → Tablet)
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-3 border border-slate-100 dark:border-slate-800">
+              <div className="text-[10px] font-bold uppercase text-slate-400">
+                Purchase / Sheet · / Tablet
+              </div>
+              <div className="font-extrabold text-sm text-slate-900 dark:text-white">
+                ₹{(med.purchasePricePerSheet || 0).toFixed(2)} · ₹
+                {(med.purchasePricePerTablet || 0).toFixed(2)}
+              </div>
+            </div>
+            <div className="bg-[#0f4a29]/10 rounded-2xl p-3 border border-[#0f4a29]/20">
+              <div className="text-[10px] font-bold uppercase text-slate-400">
+                Selling / Sheet · / Tablet
+              </div>
+              <div className="font-extrabold text-sm text-[#0f4a29] dark:text-[#52b788]">
+                ₹{(med.sellingPricePerSheet || 0).toFixed(2)} · ₹
+                {(med.sellingPricePerTablet || 0).toFixed(2)}
               </div>
             </div>
           </div>
@@ -209,8 +236,8 @@ export default function PharmacyMedicineDetails({
                 Packing Ratio
               </div>
               <div className="text-slate-900 dark:text-white font-extrabold">
-                1 Box = {med.sheetsPerBox} Sheets • 1 Sheet = {med.tabletsPerSheet}{" "}
-                {med.unitType || "Tablet"}
+                1 Box = {med.sheetsPerBox} Sheets • 1 Sheet ={" "}
+                {med.tabletsPerSheet} {med.unitType || "Tablet"}
               </div>
             </div>
           </div>

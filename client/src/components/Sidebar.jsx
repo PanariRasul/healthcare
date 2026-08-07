@@ -174,7 +174,15 @@ export default function Sidebar({ collapsed, setCollapsed }) {
           ? "MANAGER"
           : "";
   const key = user ? `${user.role}-${contextForKey}` : "";
-  const links = menuConfig[key] || [];
+  const rawLinks = menuConfig[key] || [];
+  // Pharmacy tab only shows for admins whose phone is in the
+  // PHARMACY_ADMIN_PHONES allowlist (flag comes from the backend as
+  // user.canAccessPharmacy — see auth.controller.js toSafeUser()). Every
+  // other admin sees everything except Pharmacy.
+  const links =
+    isAdmin && !user?.canAccessPharmacy
+      ? rawLinks.filter((l) => l.label !== "Pharmacy")
+      : rawLinks;
 
   const handleModuleSwitch = (mod) => {
     if (!user || mod === activeModule) return;

@@ -286,6 +286,17 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
           rate: c.rate || 0,
         });
       });
+      (data.additionalCharges || []).forEach((c) => {
+        const isPerDay = c.chargeType === "PER_DAY";
+        items.push({
+          id: nextRowId(),
+          description: isPerDay
+            ? `${c.label} (${c.days || 1} day${(c.days || 1) === 1 ? "" : "s"} × ₹${c.rate || 0})`
+            : c.label,
+          qty: isPerDay ? c.days || 1 : 1,
+          rate: c.rate || 0,
+        });
+      });
       (data.medicines || []).forEach((m) => {
         items.push({
           id: nextRowId(),

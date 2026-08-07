@@ -13,7 +13,6 @@ import {
   mapPatientEnums,
 } from "../utils/enumMapper.js";
 
-
 // ---------- helpers ----------
 
 async function generateSerialNumber() {
@@ -21,7 +20,9 @@ async function generateSerialNumber() {
     orderBy: { createdAt: "desc" },
     select: { serialNumber: true },
   });
-  const lastNum = last?.serialNumber ? parseInt(last.serialNumber.replace("IPD-", "")) || 0 : 0;
+  const lastNum = last?.serialNumber
+    ? parseInt(last.serialNumber.replace("IPD-", "")) || 0
+    : 0;
   const next = lastNum + 1;
   return `IPD-${String(next).padStart(3, "0")}`;
 }
@@ -39,8 +40,13 @@ function toNum(v) {
 
 // Normalizes incoming body into the flat patient fields + computed totals
 function buildPatientData(body) {
-  const dailyCharges = Array.isArray(body.dailyCharges) ? body.dailyCharges : [];
+  const dailyCharges = Array.isArray(body.dailyCharges)
+    ? body.dailyCharges
+    : [];
   const medicines = Array.isArray(body.medicines) ? body.medicines : [];
+  const additionalCharges = Array.isArray(body.additionalCharges)
+    ? body.additionalCharges
+    : [];
 
   const deposit = toNum(body.deposit);
   const cash = toNum(body.cash);
@@ -74,19 +80,18 @@ function buildPatientData(body) {
       dischargeStatus,
       notes: body.notes || null,
 
-      // --- Follow-up & reminder tracking (mirrors OPD) ---
-      // Frontend sends/expects display strings ("Pending", "Not Set", etc.);
-      // Prisma stores enum values ("PENDING", "NOT_SET", etc.). Convert here,
-      // right before the data is written.
+      // --- Follow-up & reminder tracking ---
       followUpDate: body.followUpDate ? new Date(body.followUpDate) : null,
       condition: conditionToDb(body.condition || null),
       followUpDesc: body.followUpDesc || null,
       followUpStatus: followUpStatusToDb(body.followUpStatus || "Pending"),
       reminderEnabled,
       reminderStatus: reminderStatusToDb(
-        reminderEnabled ? (body.reminderStatus || "Pending") : "Not Set"
+        reminderEnabled ? body.reminderStatus || "Pending" : "Not Set",
       ),
-      reminderSentDate: body.reminderSentDate ? new Date(body.reminderSentDate) : null,
+      reminderSentDate: body.reminderSentDate
+        ? new Date(body.reminderSentDate)
+        : null,
 
       deposit,
       cash,
@@ -101,12 +106,14 @@ function buildPatientData(body) {
       protein: parseInt(body.protein) || 0,
       syrup: parseInt(body.syrup) || 0,
     },
+
     dailyCharges: dailyCharges.map((c) => ({
       date: new Date(c.date || body.admissionDate),
       days: toNum(c.days),
       rate: toNum(c.rate),
       amount: toNum(c.amount),
     })),
+
     medicines: medicines
       .filter((m) => m.name && m.name.trim())
       .map((m) => ({
@@ -119,6 +126,14 @@ function buildPatientData(body) {
         duration: m.duration || null,
         instructions: m.instructions || null,
       })),
+
+    additionalCharges: additionalCharges.map((c) => ({
+      label: c.label,
+      chargeType: c.chargeType || "ONE_TIME",
+      rate: toNum(c.rate),
+      days: toNum(c.days),
+      amount: toNum(c.amount),
+    })),
   };
 }
 
@@ -136,7 +151,8 @@ async function validateMedicinesStock(medicines) {
 
   for (const m of withMedicineId) {
     const row = byId.get(m.medicineId);
-    if (!row) return `Selected medicine "${m.name}" no longer exists in the pharmacy catalog.`;
+    if (!row)
+      return `Selected medicine "${m.name}" no longer exists in the pharmacy catalog.`;
     if (m.quantity > row.quantity) {
       return `Only ${row.quantity} unit(s) of "${row.drugName}" are in stock (requested ${m.quantity}).`;
     }
@@ -146,8 +162,20 @@ async function validateMedicinesStock(medicines) {
 
 const patientInclude = {
   dailyCharges: { orderBy: { date: "asc" } },
+
   medicines: true,
-  documents: { orderBy: { createdAt: "desc" } },
+
+  additionalCharges: {
+    orderBy: {
+      createdAt: "asc",
+    },
+  },
+
+  documents: {
+    orderBy: {
+      createdAt: "desc",
+    },
+  },
 };
 
 // ---------- controllers ----------
@@ -233,19 +261,28 @@ export async function getPatient(req, res) {
 // GET /api/ipd/patients/stats  (for dashboard)
 export async function getStats(req, res) {
   try {
-    const [admittedCount, dischargedCount, totalCount, admittedPatients, allPatients, recentDischarges] =
-      await Promise.all([
-        prisma.iPD_Patient.count({ where: { status: "Admitted" } }),
-        prisma.iPD_Patient.count({ where: { status: "Discharged" } }),
-        prisma.iPD_Patient.count(),
-        prisma.iPD_Patient.findMany({ where: { status: "Admitted" }, orderBy: { admissionDate: "desc" } }),
-        prisma.iPD_Patient.findMany(),
-        prisma.iPD_Patient.findMany({
-          where: { status: "Discharged" },
-          orderBy: { dischargeDate: "desc" },
-          take: 4,
-        }),
-      ]);
+    const [
+      admittedCount,
+      dischargedCount,
+      totalCount,
+      admittedPatients,
+      allPatients,
+      recentDischarges,
+    ] = await Promise.all([
+      prisma.iPD_Patient.count({ where: { status: "Admitted" } }),
+      prisma.iPD_Patient.count({ where: { status: "Discharged" } }),
+      prisma.iPD_Patient.count(),
+      prisma.iPD_Patient.findMany({
+        where: { status: "Admitted" },
+        orderBy: { admissionDate: "desc" },
+      }),
+      prisma.iPD_Patient.findMany(),
+      prisma.iPD_Patient.findMany({
+        where: { status: "Discharged" },
+        orderBy: { dischargeDate: "desc" },
+        take: 4,
+      }),
+    ]);
 
     const totalBalance = admittedPatients.reduce((s, p) => s + p.balance, 0);
     const totalDeposits = allPatients.reduce((s, p) => s + p.deposit, 0);
@@ -272,7 +309,8 @@ export async function getStats(req, res) {
 // POST /api/ipd/patients
 export async function createPatient(req, res) {
   try {
-    const { flat, dailyCharges, medicines } = buildPatientData(req.body);
+    const { flat, dailyCharges, medicines, additionalCharges } =
+      buildPatientData(req.body);
 
     const stockError = await validateMedicinesStock(medicines);
     if (stockError) return res.status(400).json({ message: stockError });
@@ -283,8 +321,18 @@ export async function createPatient(req, res) {
       data: {
         ...flat,
         serialNumber,
-        dailyCharges: { create: dailyCharges },
-        medicines: { create: medicines },
+
+        dailyCharges: {
+          create: dailyCharges,
+        },
+
+        medicines: {
+          create: medicines,
+        },
+
+        additionalCharges: {
+          create: additionalCharges,
+        },
       },
       include: patientInclude,
     });
@@ -300,34 +348,81 @@ export async function createPatient(req, res) {
 export async function updatePatient(req, res) {
   try {
     const { id } = req.params;
-    const existing = await prisma.iPD_Patient.findUnique({ where: { id } });
-    if (!existing) return res.status(404).json({ message: "Patient not found" });
 
-    const { flat, dailyCharges, medicines } = buildPatientData(req.body);
-
-    const stockError = await validateMedicinesStock(medicines);
-    if (stockError) return res.status(400).json({ message: stockError });
-
-    // Replace nested dailyCharges / medicines wholesale (simplest consistent approach)
-    const patient = await prisma.$transaction(async (tx) => {
-      await tx.iPD_DailyCharge.deleteMany({ where: { patientId: id } });
-      await tx.iPD_Medicine.deleteMany({ where: { patientId: id } });
-
-      return tx.iPD_Patient.update({
-        where: { id },
-        data: {
-          ...flat,
-          dailyCharges: { create: dailyCharges },
-          medicines: { create: medicines },
-        },
-        include: patientInclude,
-      });
+    const existing = await prisma.iPD_Patient.findUnique({
+      where: { id },
     });
 
-    res.json(mapPatientEnums(patient));
+    if (!existing) {
+      return res.status(404).json({ message: "Patient not found" });
+    }
+
+    const { flat, dailyCharges, medicines, additionalCharges } =
+      buildPatientData(req.body);
+
+    const stockError = await validateMedicinesStock(medicines);
+    if (stockError) {
+      return res.status(400).json({ message: stockError });
+    }
+
+    // Kept to a minimal number of round-trips (3 deletes + 1 update + 1
+    // createMany) so the interactive transaction stays well inside its
+    // timeout. Previously additionalCharges was inserted via a for-loop of
+    // individual create() calls, which added one extra round-trip per charge
+    // and — combined with per-query latency — could push the whole
+    // transaction past Prisma's default 5s interactive-transaction timeout
+    // (P2028). If you're still seeing timeouts after this change, the DB
+    // connection itself has high per-query latency (e.g. a pooled/serverless
+    // Postgres) and is the thing to investigate next.
+    await prisma.$transaction(
+      async (tx) => {
+        await tx.iPD_DailyCharge.deleteMany({ where: { patientId: id } });
+        await tx.iPD_Medicine.deleteMany({ where: { patientId: id } });
+        await tx.iPD_AdditionalCharge.deleteMany({ where: { patientId: id } });
+
+        await tx.iPD_Patient.update({
+          where: { id },
+          data: {
+            ...flat,
+
+            dailyCharges: {
+              create: dailyCharges,
+            },
+
+            medicines: {
+              create: medicines,
+            },
+          },
+        });
+
+        if (additionalCharges.length > 0) {
+          await tx.iPD_AdditionalCharge.createMany({
+            data: additionalCharges.map((charge) => ({
+              patientId: id,
+              label: charge.label,
+              chargeType: charge.chargeType,
+              rate: Number(charge.rate),
+              days: Number(charge.days),
+              amount: Number(charge.amount),
+            })),
+          });
+        }
+      },
+      { timeout: 15000, maxWait: 10000 },
+    );
+
+    const fullPatient = await prisma.iPD_Patient.findUnique({
+      where: { id },
+      include: patientInclude,
+    });
+
+    res.json(mapPatientEnums(fullPatient));
   } catch (err) {
     console.error("updatePatient error:", err);
-    res.status(500).json({ message: "Failed to update patient" });
+    res.status(500).json({
+      message: "Failed to update patient",
+      error: err.message,
+    });
   }
 }
 
@@ -338,13 +433,16 @@ export async function deletePatient(req, res) {
 
     // Clean up every document this patient has in R2 before cascade-deleting
     // the DB rows, so nothing is ever left orphaned in the bucket.
-    const docs = await prisma.iPD_Document.findMany({ where: { patientId: id } });
+    const docs = await prisma.iPD_Document.findMany({
+      where: { patientId: id },
+    });
     await deleteManyObjectsFromR2(docs.map((d) => d.key));
 
     await prisma.iPD_Patient.delete({ where: { id } }); // cascades to related tables
     res.json({ message: "Patient deleted" });
   } catch (err) {
-    if (err.code === "P2025") return res.status(404).json({ message: "Patient not found" });
+    if (err.code === "P2025")
+      return res.status(404).json({ message: "Patient not found" });
     console.error("deletePatient error:", err);
     res.status(500).json({ message: "Failed to delete patient" });
   }
@@ -362,7 +460,11 @@ export async function uploadDocument(req, res) {
     if (!req.file) return res.status(400).json({ message: "No file uploaded" });
 
     // Object key follows: IPD documents/{SerialNumber}-{PatientName}/{unique}-{filename}
-    const key = buildDocumentKey(patient.serialNumber, patient.name, req.file.originalname);
+    const key = buildDocumentKey(
+      patient.serialNumber,
+      patient.name,
+      req.file.originalname,
+    );
     const url = await uploadBufferToR2({
       key,
       buffer: req.file.buffer,
@@ -383,7 +485,9 @@ export async function uploadDocument(req, res) {
     res.status(201).json(doc);
   } catch (err) {
     console.error("uploadDocument error:", err);
-    res.status(500).json({ message: err.message || "Failed to upload document" });
+    res
+      .status(500)
+      .json({ message: err.message || "Failed to upload document" });
   }
 }
 

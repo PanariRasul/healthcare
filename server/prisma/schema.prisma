@@ -148,6 +148,11 @@ model IPD_Patient {
   dischargeStatus String    @default("Admitted")
   notes           String?
 
+  // True when this admission was created via the OPD "Move to IPD" action
+  // (see OPDPatient.moveToIPD) rather than a fresh IPD admission — drives
+  // the "From OPD" badge/highlight in the IPD directory.
+  fromOPD Boolean @default(false)
+
   followUpDate     DateTime?
   condition        PatientCondition?
   followUpDesc     String?
@@ -214,10 +219,10 @@ model IPD_AdditionalCharge {
   // meaningful when chargeType = PER_DAY). Stored rather than recomputed
   // live so past invoices don't silently change if the patient's admission
   // or discharge date is edited later.
-  days      Float       @default(0)
-  amount    Float // = rate when ONE_TIME, = rate * days when PER_DAY
-  createdAt DateTime    @default(now())
-  patient   IPD_Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  days       Float         @default(0)
+  amount     Float // = rate when ONE_TIME, = rate * days when PER_DAY
+  createdAt  DateTime      @default(now())
+  patient    IPD_Patient   @relation(fields: [patientId], references: [id], onDelete: Cascade)
 
   @@map("ipd_additional_charges")
 }

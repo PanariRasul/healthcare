@@ -239,6 +239,97 @@ export async function createPrescription(req, res) {
   }
 }
 
+// POST /api/opd/patients/:id/move-to-ipd
+// Admits an OPD patient into IPD. Carries over demographics, follow-up /
+// condition tracking, and any prescribed medicines onto a brand-new
+// IPD_Patient row, then removes the OPD record — this is a MOVE, not a
+// copy, so the patient shows up in the IPD directory instead of OPD from
+// here on. Wrapped in a transaction so a failure never leaves the patient
+// duplicated in both modules or missing from both.
+export async function moveToIPD(req, res) {
+  try {
+    const opdPatient = await prisma.oPDPatient.findUnique({
+      where: { id: req.params.id },
+      include: { prescribedMedicines: { include: { medicine: true } } },
+    });
+    if (!opdPatient) return res.status(404).json({ message: "Patient not found." });
+
+    const { admissionDate, admissionTime } = req.body;
+    const genderMap = { MALE: "Male", FEMALE: "Female", OTHER: "Other" };
+
+    const notesParts = [
+      `Transferred from OPD (Token OPD-${String(opdPatient.tokenNumber).padStart(3, "0")})`,
+    ];
+    if (opdPatient.diagnosis) notesParts.push(`Diagnosis: ${opdPatient.diagnosis}`);
+    if (opdPatient.prescription) notesParts.push(`Prescription: ${opdPatient.prescription}`);
+    if (opdPatient.doctorNotes) notesParts.push(`Doctor Notes: ${opdPatient.doctorNotes}`);
+    if (opdPatient.notes) notesParts.push(opdPatient.notes);
+
+    const ipdPatient = await prisma.$transaction(async (tx) => {
+      const last = await tx.iPD_Patient.findFirst({
+        orderBy: { createdAt: "desc" },
+        select: { serialNumber: true },
+      });
+      const lastNum = last?.serialNumber
+        ? parseInt(last.serialNumber.replace("IPD-", "")) || 0
+        : 0;
+      const serialNumber = `IPD-${String(lastNum + 1).padStart(3, "0")}`;
+
+      const created = await tx.iPD_Patient.create({
+        data: {
+          serialNumber,
+          name: opdPatient.name,
+          age: opdPatient.age,
+          gender: genderMap[opdPatient.gender] || "Other",
+          phone: opdPatient.phone || null,
+          fromOPD: true,
+
+          admissionDate: admissionDate ? new Date(admissionDate) : new Date(),
+          admissionTime:
+            admissionTime ||
+            new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
+
+          notes: notesParts.join(" | "),
+
+          // Same enum types on both models, so these carry over as-is.
+          followUpDate: opdPatient.followUpDate,
+          condition: opdPatient.condition,
+          followUpDesc: opdPatient.followUpDesc,
+          followUpStatus: opdPatient.followUpStatus,
+          reminderEnabled: opdPatient.reminderEnabled,
+          reminderStatus: opdPatient.reminderStatus,
+          reminderSentDate: opdPatient.reminderSentDate,
+
+          medicines: {
+            create: (opdPatient.prescribedMedicines || []).map((pm) => ({
+              medicineId: pm.medicineId,
+              name: pm.medicine?.drugName || "Unknown",
+              quantity: pm.quantity,
+              unit: "Tablets",
+              instructions: pm.dosageInstructions || null,
+            })),
+          },
+        },
+        include: {
+          dailyCharges: true,
+          medicines: true,
+          additionalCharges: true,
+          documents: true,
+        },
+      });
+
+      await tx.oPDPatient.delete({ where: { id: opdPatient.id } });
+
+      return created;
+    });
+
+    return res.status(201).json({ patient: ipdPatient });
+  } catch (err) {
+    console.error("Move OPD to IPD error:", err);
+    return res.status(500).json({ message: "Could not move patient to IPD." });
+  }
+}
+
 // DELETE /api/opd/patients/:id/prescriptions/:itemId
 // Deletes the record only — does NOT restore stock. If tablets weren't
 // actually dispensed, stock must be corrected manually via Pharmacy's

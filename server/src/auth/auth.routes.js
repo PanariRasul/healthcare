@@ -1,6 +1,12 @@
 // server/src/auth/auth.routes.js
 import { Router } from "express";
-import { register, login, me, sendOtp, verifyOtpAndLogin, updatePassword } from "./auth.controller.js";
+import {
+  register,
+  login,
+  loginWithPhone,
+  me,
+  updatePassword,
+} from "./auth.controller.js";
 import { requireAuth, requireRole } from "./auth.middleware.js";
 
 const router = Router();
@@ -15,9 +21,9 @@ router.post("/register", requireAuth, requireRole("ADMIN"), register);
 // Legacy email/password login — kept for backward compatibility.
 router.post("/login", login);
 
-// Phone + OTP login (used by the current Login page).
-router.post("/send-otp", sendOtp);
-router.post("/verify-otp", verifyOtpAndLogin);
+// Phone + password login (used by the current Login page). OTP has been
+// removed — this is a single request, no verification code step.
+router.post("/login-phone", loginWithPhone);
 
 router.get("/me", requireAuth, me); // handy for "am I still logged in?" checks on app load
 

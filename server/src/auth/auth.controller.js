@@ -2,15 +2,6 @@
 import prisma from "../lib/prisma.js";
 import { hashPassword, comparePassword } from "./hash.js";
 import { signToken } from "./jwt.js";
-import {
-  generateOtp,
-  canResend,
-  saveOtp,
-  verifyOtp,
-  secondsUntilResend,
-  deleteOtp,
-} from "./otp.store.js";
-import { sendOtpSms } from "./sms.service.js";
 import { normalizePhone } from "./sms.service.js";
 import { isPharmacyAdmin } from "./pharmacyAccess.js";
 
@@ -20,9 +11,8 @@ const VALID_ROLES = ["ADMIN", "DOCTOR", "RECEPTIONIST", "PHARMACY", "MANAGER"];
 const VALID_MODULES = ["OPD", "IPD", "PHARMACY"];
 
 // "ADMIN" and "MANAGER" aren't real Modules — those users aren't assigned to
-// one. They're login contexts the Login page sends so send-otp/verify-otp
-// know to check the user's ROLE instead of their modules array. See
-// sendOtp/verifyOtpAndLogin.
+// one. They're login contexts the Login page sends so login-with-phone
+// knows to check the user's ROLE instead of their modules array.
 const ROLE_BASED_LOGIN_CONTEXTS = ["ADMIN", "MANAGER"];
 
 // "HOSPITAL" is a merged login context introduced so receptionists/doctors
@@ -41,13 +31,6 @@ const VALID_LOGIN_CONTEXTS = [
   ...MODULE_LOGIN_CONTEXTS,
   ...ROLE_BASED_LOGIN_CONTEXTS,
 ];
-
-// Bypass code for local/dev testing only. OFF by default — must be turned
-// on explicitly with ALLOW_OTP_BYPASS=true in .env. Do NOT set this in
-// production; anyone who knows the code could log in as anyone without
-// receiving the SMS.
-const OTP_BYPASS_CODE = "969696";
-const OTP_BYPASS_ENABLED = process.env.ALLOW_OTP_BYPASS === "true";
 
 // Strip password before ever sending a user object back to the client.
 // Admin users additionally get a `canAccessPharmacy` flag computed from
@@ -174,12 +157,10 @@ export async function login(req, res) {
   }
 }
 
-// Step 1 of OTP login: validate the phone + password belong to an active
-// user assigned to the requested module, then send a 6-digit OTP over SMS.
-// The OTP is only ever sent once the password has checked out, so knowing a
-// phone number alone is no longer enough to trigger an SMS to someone else's
-// device.
-export async function sendOtp(req, res) {
+// Phone + password login (replaces the old two-step OTP flow used by the
+// Login page). Same module/role checks the OTP flow used to run before
+// sending a code — now they gate the JWT issuance directly, in one request.
+export async function loginWithPhone(req, res) {
   try {
     const { phone, password, module } = req.body;
 
@@ -194,8 +175,6 @@ export async function sendOtp(req, res) {
         message: `module must be one of ${VALID_LOGIN_CONTEXTS.join(", ")}`,
       });
     }
-
-    const normalized = normalizePhone(phone);
 
     const user = await findUserByPhone(phone);
     if (!user || !user.isActive) {
@@ -237,133 +216,6 @@ export async function sendOtp(req, res) {
       });
     }
 
-    if (!canResend(normalized)) {
-      return res.status(429).json({
-        message: `Please wait ${secondsUntilResend(normalized)}s before requesting another OTP.`,
-      });
-    }
-
-    const otp = generateOtp();
-    saveOtp(normalized, otp);
-
-    console.log(
-      `[OTP] Generated OTP for ${normalized} (module: ${moduleUpper})`,
-    );
-
-    try {
-      await sendOtpSms(normalized, otp);
-      console.log(`[OTP] SMS gateway accepted the request for ${normalized}`);
-    } catch (smsErr) {
-      deleteOtp(normalized);
-
-      console.error(
-        `[OTP] SMS delivery FAILED for ${normalized}:`,
-        smsErr.message,
-      );
-
-      throw smsErr;
-    }
-
-    return res
-      .status(200)
-      .json({ message: "OTP sent to your registered mobile number." });
-  } catch (err) {
-    console.error("Send OTP error:", err);
-    return res
-      .status(500)
-      .json({ message: "Could not send OTP. Please try again." });
-  }
-}
-
-// Step 2 of OTP login: verify the code and, if correct, issue a JWT exactly
-// like the old email/password login did.
-export async function verifyOtpAndLogin(req, res) {
-  console.log("================================");
-  console.log("VERIFY OTP API CALLED");
-  console.log("Time:", new Date().toISOString());
-  console.log("Body:", req.body);
-  console.log("================================");
-  try {
-    const { phone, otp, module } = req.body;
-
-    if (!phone || !otp) {
-      return res.status(400).json({ message: "phone and otp are required." });
-    }
-    const moduleUpper = String(module || "").toUpperCase();
-    if (!VALID_LOGIN_CONTEXTS.includes(moduleUpper)) {
-      return res.status(400).json({
-        message: `module must be one of ${VALID_LOGIN_CONTEXTS.join(", ")}`,
-      });
-    }
-
-    const normalized = normalizePhone(phone);
-
-    console.log(
-      `[OTP-VERIFY] Incoming request — phone raw: "${phone}", normalized: "${normalized}", otp: "${otp}", module: ${moduleUpper}`,
-    );
-
-    const submittedOtp = String(otp).trim();
-    const isBypass = OTP_BYPASS_ENABLED && submittedOtp === OTP_BYPASS_CODE;
-
-    if (isBypass) {
-      console.log(
-        `[OTP-VERIFY] Bypass code used for ${normalized} — skipping real OTP check.`,
-      );
-      deleteOtp(normalized); // clear any pending real OTP so it can't also be replayed
-    } else {
-      const result = verifyOtp(normalized, submittedOtp);
-
-      if (!result.ok) {
-        console.warn(
-          `[OTP-VERIFY] FAILED for ${normalized} — reason: ${result.reason}`,
-        );
-        return res.status(401).json({ message: result.reason });
-      }
-      console.log(`[OTP-VERIFY] OTP matched for ${normalized}`);
-    }
-
-    console.log("Finding user...");
-
-    const user = await findUserByPhone(phone);
-
-    console.log("User:", user);
-    if (!user || !user.isActive) {
-      console.warn(
-        `[OTP-VERIFY] No active user found for phone "${phone}" (normalized "${normalized}") after OTP matched.`,
-      );
-      return res.status(401).json({ message: "Invalid credentials." });
-    }
-    if (ROLE_BASED_LOGIN_CONTEXTS.includes(moduleUpper)) {
-      if (user.role !== moduleUpper) {
-        console.warn(
-          `[OTP-VERIFY] User ${user.id} does not have the ${moduleUpper} role.`,
-        );
-        return res.status(403).json({
-          message: `This account does not have ${moduleUpper.toLowerCase()} access.`,
-        });
-      }
-    } else if (moduleUpper === HOSPITAL_LOGIN_CONTEXT) {
-      // Merged OPD/IPD login — let them in if they're assigned to either one.
-      const hasHospitalAccess = user.modules.some(
-        (m) => m === "OPD" || m === "IPD",
-      );
-      if (!hasHospitalAccess) {
-        console.warn(
-          `[OTP-VERIFY] User ${user.id} is not assigned to OPD or IPD. Their modules: ${user.modules}`,
-        );
-        return res.status(403).json({
-          message: "This account is not assigned to the OPD or IPD module.",
-        });
-      }
-    } else if (!user.modules.includes(moduleUpper)) {
-      console.warn(
-        `[OTP-VERIFY] User ${user.id} is not assigned to module ${moduleUpper}. Their modules: ${user.modules}`,
-      );
-      return res.status(403).json({
-        message: "This account is not assigned to the selected module.",
-      });
-    }
-
     const token = signToken({
       id: user.id,
       role: user.role,
@@ -373,10 +225,10 @@ export async function verifyOtpAndLogin(req, res) {
 
     return res.status(200).json({ token, user: toSafeUser(user) });
   } catch (err) {
-    console.error("Verify OTP error:", err);
+    console.error("Phone login error:", err);
     return res
       .status(500)
-      .json({ message: "Something went wrong verifying the OTP." });
+      .json({ message: "Something went wrong during login." });
   }
 }
 

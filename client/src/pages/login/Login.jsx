@@ -11,7 +11,6 @@ import {
   Smartphone,
   ArrowRight,
   Activity,
-  CheckCircle2,
   AlertCircle,
 } from "lucide-react";
 
@@ -71,13 +70,8 @@ export default function Login() {
   const [module, setModule] = useState("HOSPITAL");
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
-  const [otp, setOtp] = useState("");
-  const [step, setStep] = useState("phone");
   const [error, setError] = useState("");
-  const [info, setInfo] = useState("");
   const [loading, setLoading] = useState(false);
-  const [resendIn, setResendIn] = useState(0);
-  const resendTimer = useRef(null);
 
   // Cursor tracking: hero parallax/spotlight + a soft spotlight on the login
   // card. Both are gated behind a real hover-capable pointer, so touch
@@ -158,24 +152,10 @@ export default function Login() {
 
   const resetBtnOffset = () => setBtnOffset({ x: 0, y: 0 });
 
-  const startResendCountdown = (seconds = 60) => {
-    setResendIn(seconds);
-    clearInterval(resendTimer.current);
-    resendTimer.current = setInterval(() => {
-      setResendIn((s) => {
-        if (s <= 1) {
-          clearInterval(resendTimer.current);
-          return 0;
-        }
-        return s - 1;
-      });
-    }, 1000);
-  };
-
-  const handleSendOtp = async (e) => {
+  // Single-step phone + password login — no OTP/verification code involved.
+  const handleLogin = async (e) => {
     e.preventDefault();
     setError("");
-    setInfo("");
 
     if (!module)
       return setError("Please select an administration module first.");
@@ -186,7 +166,7 @@ export default function Login() {
 
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/auth/send-otp`, {
+      const res = await fetch(`${API_BASE}/auth/login-phone`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -198,106 +178,25 @@ export default function Login() {
       const data = await res.json();
 
       if (!res.ok) {
-        setError(data.message || "Could not send OTP. Please try again.");
+        setError(data.message || "Invalid mobile number or password.");
         setLoading(false);
         return;
       }
 
-      // OTP sent — move to the verification screen and start the resend
-      // cooldown. The user now enters the code they received by SMS.
-      setOtp("");
-      setStep("otp");
-      startResendCountdown(60);
-    } catch {
-      setError("Network error. Please check your connection and try again.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleResendOtp = async () => {
-    if (resendIn > 0) return;
-    setError("");
-    setInfo("");
-    setLoading(true);
-    try {
-      const digits = phone.replace(/\D/g, "");
-      const res = await fetch(`${API_BASE}/auth/send-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          phone: digits,
-          password,
-          module: module.toUpperCase(),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.message || "Could not resend OTP.");
-      } else {
-        setInfo("A new code has been sent.");
-        startResendCountdown(60);
+      try {
+        setAuth(data.token, data.user, module.toUpperCase());
+        navigate(routeFor(data.user, module.toUpperCase()));
+      } catch (authErr) {
+        console.error("setAuth/navigate failed after login:", authErr);
+        setError(
+          "Signed in, but couldn't start your session. Please refresh and try again.",
+        );
       }
     } catch {
       setError("Network error. Please check your connection and try again.");
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleVerifyOtp = async (e) => {
-    e.preventDefault();
-    setError("");
-    setInfo("");
-
-    if (otp.trim().length !== 6)
-      return setError("Enter the 6-digit code sent to your phone.");
-
-    setLoading(true);
-    try {
-      const digits = phone.replace(/\D/g, "");
-      const res = await fetch(`${API_BASE}/auth/verify-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          phone: digits,
-          otp: otp.trim(),
-          module: module.toUpperCase(),
-        }),
-      });
-      const data = await res.json();
-
-      if (!res.ok) {
-        setError(data.message || "Invalid or expired code.");
-      } else {
-        try {
-          setAuth(data.token, data.user, module.toUpperCase());
-          navigate(routeFor(data.user, module.toUpperCase()));
-        } catch (authErr) {
-          console.error(
-            "setAuth/navigate failed after OTP verification:",
-            authErr,
-          );
-          setError(
-            "Signed in, but couldn't start your session. Please refresh and try again.",
-          );
-        }
-      }
-    } catch {
-      setError("Network error. Please check your connection and try again.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const changeNumber = () => {
-    setStep("phone");
-    setOtp("");
-    setPassword("");
-    setError("");
-    setInfo("");
-    clearInterval(resendTimer.current);
-    setResendIn(0);
   };
 
   return (
@@ -558,7 +457,7 @@ export default function Login() {
                   <button
                     key={m.id}
                     type="button"
-                    disabled={step === "otp"}
+                    disabled={loading}
                     onClick={() => {
                       setModule(m.id);
                       setError("");
@@ -592,155 +491,73 @@ export default function Login() {
           </div>
 
           {/* Form */}
-          {step === "phone" ? (
-            <form
-              key="phone"
-              onSubmit={handleSendOtp}
-              className="anim-step-in relative space-y-4"
-            >
-              <div>
-                <label className="text-[10px] font-extrabold uppercase tracking-widest text-[#7C8C82] block mb-1.5">
-                  Mobile number
-                </label>
-                <div className="relative flex items-center">
-                  <Smartphone className="w-4 h-4 text-[#7C8C82] absolute left-3.5 pointer-events-none" />
-                  <input
-                    type="tel"
-                    inputMode="numeric"
-                    value={phone}
-                    onChange={(e) => {
-                      setPhone(e.target.value);
-                      setError("");
-                    }}
-                    placeholder="Enter 10-digit mobile number"
-                    maxLength={10}
-                    className="w-full bg-white border border-[#132A1D]/15 rounded-2xl pl-10 pr-4 py-3 text-xs font-bold text-[#132A1D] placeholder-[#A3AFA8] transition-all duration-200 focus:outline-none focus:border-[#0B2E1D] focus:ring-4 focus:ring-[#52B788]/15"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-[10px] font-extrabold uppercase tracking-widest text-[#7C8C82] block mb-1.5">
-                  Password
-                </label>
-                <div className="relative flex items-center">
-                  <Lock className="w-4 h-4 text-[#7C8C82] absolute left-3.5 pointer-events-none" />
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => {
-                      setPassword(e.target.value);
-                      setError("");
-                    }}
-                    placeholder="Enter password"
-                    autoComplete="current-password"
-                    className="w-full bg-white border border-[#132A1D]/15 rounded-2xl pl-10 pr-4 py-3 text-xs font-bold text-[#132A1D] placeholder-[#A3AFA8] transition-all duration-200 focus:outline-none focus:border-[#0B2E1D] focus:ring-4 focus:ring-[#52B788]/15"
-                  />
-                </div>
-              </div>
-
-              {error && <ErrorBanner text={error} />}
-
-              <button
-                type="submit"
-                disabled={loading}
-                onMouseMove={handleBtnMouseMove}
-                onMouseLeave={resetBtnOffset}
-                style={{
-                  transform: `translate(${btnOffset.x}px, ${btnOffset.y}px)`,
-                }}
-                className="w-full bg-[#0B2E1D] hover:bg-[#0F3B26] text-[#FAF8F3] font-extrabold text-xs py-3.5 rounded-full shadow-md hover:shadow-xl disabled:opacity-50 flex items-center justify-center gap-2 mt-2 transition-all duration-150 ease-out active:scale-[0.98]"
-              >
-                {loading ? (
-                  <Spinner label="Authenticating..." />
-                ) : (
-                  <>
-                    <span>Sign in</span>
-                    <ArrowRight className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-1" />
-                  </>
-                )}
-              </button>
-            </form>
-          ) : (
-            <form
-              key="otp"
-              onSubmit={handleVerifyOtp}
-              className="anim-step-in relative space-y-4"
-            >
-              <div className="flex items-center justify-between">
-                <label className="text-[10px] font-extrabold uppercase tracking-widest text-[#7C8C82]">
-                  Verification code
-                </label>
-                <button
-                  type="button"
-                  onClick={changeNumber}
-                  className="text-xs font-extrabold text-[#0B2E1D] hover:underline underline-offset-2"
-                >
-                  Change number
-                </button>
-              </div>
-
-              <input
-                type="text"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                autoFocus
-                value={otp}
-                onChange={(e) => {
-                  setOtp(e.target.value.replace(/\D/g, "").slice(0, 6));
-                  setError("");
-                }}
-                onPaste={(e) => {
-                  const pasted = e.clipboardData.getData("text");
-                  const digits = pasted.replace(/\D/g, "").slice(0, 6);
-                  if (digits) {
-                    e.preventDefault();
-                    setOtp(digits);
+          <form
+            onSubmit={handleLogin}
+            className="anim-step-in relative space-y-4"
+          >
+            <div>
+              <label className="text-[10px] font-extrabold uppercase tracking-widest text-[#7C8C82] block mb-1.5">
+                Mobile number
+              </label>
+              <div className="relative flex items-center">
+                <Smartphone className="w-4 h-4 text-[#7C8C82] absolute left-3.5 pointer-events-none" />
+                <input
+                  type="tel"
+                  inputMode="numeric"
+                  value={phone}
+                  onChange={(e) => {
+                    setPhone(e.target.value);
                     setError("");
-                  }
-                }}
-                placeholder="••••••"
-                maxLength={6}
-                className="w-full text-center tracking-[0.5em] font-mono font-extrabold text-lg bg-white border border-[#132A1D]/15 rounded-2xl px-4 py-3 text-[#132A1D] transition-all duration-200 focus:outline-none focus:border-[#0B2E1D] focus:ring-4 focus:ring-[#52B788]/15"
-              />
+                  }}
+                  placeholder="Enter 10-digit mobile number"
+                  maxLength={10}
+                  className="w-full bg-white border border-[#132A1D]/15 rounded-2xl pl-10 pr-4 py-3 text-xs font-bold text-[#132A1D] placeholder-[#A3AFA8] transition-all duration-200 focus:outline-none focus:border-[#0B2E1D] focus:ring-4 focus:ring-[#52B788]/15"
+                />
+              </div>
+            </div>
 
-              <p className="text-[11px] text-[#7C8C82] text-center font-medium">
-                Code sent to{" "}
-                <span className="font-bold text-[#132A1D]">{phone}</span>.{" "}
-                {resendIn > 0 ? (
-                  <span className="text-[#A3AFA8]">Resend in {resendIn}s</span>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={handleResendOtp}
-                    className="text-[#0B2E1D] font-bold hover:underline underline-offset-2"
-                  >
-                    Resend code
-                  </button>
-                )}
-              </p>
+            <div>
+              <label className="text-[10px] font-extrabold uppercase tracking-widest text-[#7C8C82] block mb-1.5">
+                Password
+              </label>
+              <div className="relative flex items-center">
+                <Lock className="w-4 h-4 text-[#7C8C82] absolute left-3.5 pointer-events-none" />
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    setError("");
+                  }}
+                  placeholder="Enter password"
+                  autoComplete="current-password"
+                  className="w-full bg-white border border-[#132A1D]/15 rounded-2xl pl-10 pr-4 py-3 text-xs font-bold text-[#132A1D] placeholder-[#A3AFA8] transition-all duration-200 focus:outline-none focus:border-[#0B2E1D] focus:ring-4 focus:ring-[#52B788]/15"
+                />
+              </div>
+            </div>
 
-              {info && !error && <InfoBanner text={info} />}
-              {error && <ErrorBanner text={error} />}
+            {error && <ErrorBanner text={error} />}
 
-              <button
-                type="submit"
-                disabled={loading}
-                onMouseMove={handleBtnMouseMove}
-                onMouseLeave={resetBtnOffset}
-                style={{
-                  transform: `translate(${btnOffset.x}px, ${btnOffset.y}px)`,
-                }}
-                className="w-full bg-[#0B2E1D] hover:bg-[#0F3B26] text-[#FAF8F3] font-extrabold text-xs py-3.5 rounded-full shadow-md hover:shadow-xl disabled:opacity-50 flex items-center justify-center gap-2 transition-all duration-150 ease-out active:scale-[0.98]"
-              >
-                {loading ? (
-                  <Spinner label="Verifying..." />
-                ) : (
-                  "Verify & sign in"
-                )}
-              </button>
-            </form>
-          )}
+            <button
+              type="submit"
+              disabled={loading}
+              onMouseMove={handleBtnMouseMove}
+              onMouseLeave={resetBtnOffset}
+              style={{
+                transform: `translate(${btnOffset.x}px, ${btnOffset.y}px)`,
+              }}
+              className="w-full bg-[#0B2E1D] hover:bg-[#0F3B26] text-[#FAF8F3] font-extrabold text-xs py-3.5 rounded-full shadow-md hover:shadow-xl disabled:opacity-50 flex items-center justify-center gap-2 mt-2 transition-all duration-150 ease-out active:scale-[0.98]"
+            >
+              {loading ? (
+                <Spinner label="Signing in..." />
+              ) : (
+                <>
+                  <span>Sign in</span>
+                  <ArrowRight className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-1" />
+                </>
+              )}
+            </button>
+          </form>
         </div>
       </div>
     </div>
@@ -782,13 +599,3 @@ function ErrorBanner({ text }) {
     </div>
   );
 }
-
-function InfoBanner({ text }) {
-  return (
-    <div className="anim-step-in bg-[#0B2E1D]/10 border border-[#0B2E1D]/20 rounded-2xl p-3 text-[#0B2E1D] text-xs font-bold flex items-center gap-2">
-      <CheckCircle2 className="w-4 h-4 shrink-0 text-[#0B2E1D]" />
-      <span>{text}</span>
-    </div>
-  );
-}
-  

@@ -163,6 +163,13 @@ export default function IPDPatientList({ readOnly = false }) {
         }
       />
 
+      {/* <div className="flex items-center gap-2 -mt-2">
+        <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-violet-700 bg-violet-50 border border-violet-200 rounded-full px-3 py-1">
+          <span className="w-2 h-2 rounded-full bg-violet-500" />
+          Purple = Patient moved from OPD
+        </span>
+      </div> */}
+
       <div className="flex flex-col gap-3 md:flex-row md:items-center justify-between">
         <SearchBar
           value={search}
@@ -223,7 +230,11 @@ export default function IPDPatientList({ readOnly = false }) {
             {patients.map((p) => (
               <tr
                 key={p.id}
-                className="border-t border-slate-100 dark:border-slate-800/60"
+                className={`border-t border-slate-100 dark:border-slate-800/60 ${
+                  p.fromOPD
+                    ? "bg-violet-50/60 dark:bg-violet-500/10 border-l-4 border-l-violet-400"
+                    : ""
+                }`}
               >
                 <Td>
                   <span className="font-mono text-xs text-[#0f4a29] dark:text-[#52b788] font-extrabold">
@@ -237,6 +248,11 @@ export default function IPDPatientList({ readOnly = false }) {
                   >
                     {p.name}
                   </button>
+                  {p.fromOPD && (
+                    <span className="ml-2 inline-flex items-center text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200">
+                      From OPD
+                    </span>
+                  )}
                 </Td>
                 <Td>{fmtDate(p.admissionDate)}</Td>
                 <Td className="font-bold">₹{p.totalStay?.toLocaleString()}</Td>

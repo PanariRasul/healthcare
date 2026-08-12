@@ -28,11 +28,12 @@ const UNIT_TYPE_TO_DB = Object.fromEntries(
 );
 
 // Broad classification, separate from the free-text Category. Fixed set of
-// three — see schema.prisma's MedicineType enum comment.
+// three — see schema.prisma's MedicineType enum comment. DB values are
+// unchanged (GENERIC / SURGICAL); only the display labels were renamed.
 const MEDICINE_TYPE_FROM_DB = {
-  GENERIC: "Generic Medicine",
+  GENERIC: "General Medicine",
   AYURVEDIC: "Ayurvedic Medicine",
-  SURGICAL: "Surgery Related Item",
+  SURGICAL: "Surgical Medicine",
 };
 const MEDICINE_TYPE_TO_DB = Object.fromEntries(
   Object.entries(MEDICINE_TYPE_FROM_DB).map(([db, label]) => [label, db]),
@@ -42,11 +43,13 @@ export function toDbMedicineType(displayType) {
   return MEDICINE_TYPE_TO_DB[displayType] || "GENERIC";
 }
 export function fromDbMedicineType(dbType) {
-  return MEDICINE_TYPE_FROM_DB[dbType] || "Generic Medicine";
+  return MEDICINE_TYPE_FROM_DB[dbType] || "General Medicine";
 }
 
-const STOCK_UNIT_FROM_DB = { BOX: "Box", SHEET: "Sheet", TABLET: "Tablet" };
-const STOCK_UNIT_TO_DB = { Box: "BOX", Sheet: "SHEET", Tablet: "TABLET" };
+// Packing hierarchy: previously Box → Sheet → Tablet, now just
+// Strip → Tablet.
+const STOCK_UNIT_FROM_DB = { STRIP: "Strip", TABLET: "Tablet" };
+const STOCK_UNIT_TO_DB = { Strip: "STRIP", Tablet: "TABLET" };
 
 export function toDbUnitType(displayUnitType) {
   return UNIT_TYPE_TO_DB[displayUnitType] || "TABLET";
@@ -63,22 +66,25 @@ export function fromDbStockUnit(dbStockUnit) {
   return dbStockUnit ? STOCK_UNIT_FROM_DB[dbStockUnit] || dbStockUnit : null;
 }
 
-// Breaks a tablet-equivalent quantity down into Boxes/Sheets/Tablets using
-// this medicine's packing configuration. Always computed live from
-// `quantity` — never stored — so the breakdown can never drift out of sync
-// no matter which module (Pharmacy stock update, OPD prescription
-// deduction, IPD dispensing) is the one that actually changed `quantity`.
-export function computeStockBreakdown(quantity, tabletsPerSheet, sheetsPerBox) {
-  const tps = tabletsPerSheet && tabletsPerSheet > 0 ? tabletsPerSheet : 1;
-  const spb = sheetsPerBox && sheetsPerBox > 0 ? sheetsPerBox : 1;
+// Breaks a tablet-equivalent quantity down into Strips/Tablets using this
+// medicine's packing configuration. Always computed live from `quantity` —
+// never stored — so the breakdown can never drift out of sync no matter
+// which module (Pharmacy stock update, OPD prescription deduction, IPD
+// dispensing) is the one that actually changed `quantity`. If
+// tabletsPerStrip isn't set (0/null — e.g. this medicine was added without
+// packing info), everything is reported as loose tablets.
+export function computeStockBreakdown(quantity, tabletsPerStrip) {
+  const tps = tabletsPerStrip && tabletsPerStrip > 0 ? tabletsPerStrip : 0;
   const qty = Math.max(quantity || 0, 0);
 
-  const totalFullSheets = Math.floor(qty / tps);
-  const availableTablets = qty % tps;
-  const availableBoxes = Math.floor(totalFullSheets / spb);
-  const availableSheets = totalFullSheets % spb;
+  if (!tps) {
+    return { availableStrips: 0, availableTablets: qty };
+  }
 
-  return { availableBoxes, availableSheets, availableTablets };
+  const availableStrips = Math.floor(qty / tps);
+  const availableTablets = qty % tps;
+
+  return { availableStrips, availableTablets };
 }
 
 function formatDate(d) {
@@ -100,65 +106,54 @@ export function fromDbStockHistory(h) {
   };
 }
 
-// medicine here is a Prisma result with `category` included (relation object)
-// and `stockHistory` included (array), most-recent-last like the old dummy data.
+// medicine here is a Prisma result with `category` included (relation object,
+// possibly null now that category is optional) and `stockHistory` included
+// (array), most-recent-last like the old dummy data.
 export function fromDbMedicine(medicine) {
-  const tabletsPerSheet = medicine.tabletsPerSheet || 1;
-  const sheetsPerBox = medicine.sheetsPerBox || 1;
-  const tabletsPerBox = tabletsPerSheet * sheetsPerBox;
-  const breakdown = computeStockBreakdown(
-    medicine.quantity,
-    tabletsPerSheet,
-    sheetsPerBox,
-  );
+  const tabletsPerStrip = medicine.tabletsPerStrip || 0;
+  const purchasePrice = medicine.purchasePrice || 0;
+  const sellingPrice = medicine.sellingPrice || 0;
+  const breakdown = computeStockBreakdown(medicine.quantity, tabletsPerStrip);
 
   return {
     id: medicine.id,
-    serialNumber: medicine.serialNumber,
-    drugName: medicine.drugName,
+    serialNumber: medicine.serialNumber || "",
+    drugName: medicine.drugName || "",
     genericName: medicine.genericName || "",
     category: medicine.category?.name || "",
     medicineType: fromDbMedicineType(medicine.medicineType),
     manufacturer: medicine.manufacturer || "",
-    batchNumber: medicine.batchNumber,
-    purchasePrice: medicine.purchasePrice,
-    sellingPrice: medicine.sellingPrice,
-    unitsPerPack: medicine.unitsPerPack,
+    batchNumber: medicine.batchNumber || "",
+    // Per strip.
+    purchasePrice,
+    sellingPrice,
     quantity: medicine.quantity,
     initialQuantity: medicine.initialQuantity,
-    reorderLevel: medicine.reorderLevel,
+    reorderLevel: medicine.reorderLevel || 0,
+    purchaseDate: formatDate(medicine.purchaseDate),
     expiryDate: formatDate(medicine.expiryDate),
     supplierName: medicine.supplierName || "",
     notes: medicine.notes || "",
 
-    // --- Packing information (Box → Sheet → Tablet) ---
+    // --- Packing information (Strip → Tablet) ---
     unitType: fromDbUnitType(medicine.unitType),
-    sheetsPerBox,
-    tabletsPerSheet,
-    boxesPurchased: medicine.boxesPurchased || 0,
-    totalSheets: medicine.totalSheets || 0,
+    tabletsPerStrip,
+    totalStrips: medicine.totalStrips || 0,
     totalTablets: medicine.totalTablets || 0,
-    // Current stock, broken into Boxes/Sheets/Tablets. Derived live from
+    // Current stock, broken into Strips/Tablets. Derived live from
     // `quantity` on every read (see computeStockBreakdown above) — this is
     // both "current stock" and "available stock" since this system has no
     // separate stock-reservation concept.
-    availableBoxes: breakdown.availableBoxes,
-    availableSheets: breakdown.availableSheets,
+    availableStrips: breakdown.availableStrips,
     availableTablets: breakdown.availableTablets,
-    // Purchase/selling price entered on the form are PER BOX. Derived
-    // per-sheet/per-tablet prices, ready for future billing screens.
-    purchasePricePerSheet: sheetsPerBox
-      ? medicine.purchasePrice / sheetsPerBox
-      : medicine.purchasePrice,
-    purchasePricePerTablet: tabletsPerBox
-      ? medicine.purchasePrice / tabletsPerBox
-      : medicine.purchasePrice,
-    sellingPricePerSheet: sheetsPerBox
-      ? medicine.sellingPrice / sheetsPerBox
-      : medicine.sellingPrice,
-    sellingPricePerTablet: tabletsPerBox
-      ? medicine.sellingPrice / tabletsPerBox
-      : medicine.sellingPrice,
+    // Purchase/selling price entered on the form are PER STRIP. Derived
+    // per-tablet price (auto-calculated), ready for billing screens.
+    purchasePricePerTablet: tabletsPerStrip
+      ? purchasePrice / tabletsPerStrip
+      : purchasePrice,
+    sellingPricePerTablet: tabletsPerStrip
+      ? sellingPrice / tabletsPerStrip
+      : sellingPrice,
 
     stockHistory: (medicine.stockHistory || [])
       .slice()

@@ -19,7 +19,7 @@ import { Plus, Search, Loader2, Receipt } from "lucide-react";
 import { api } from "../../lib/api";
 import { useAuth } from "../../context/AuthContext";
 
-const PER_PAGE = 8;
+const PER_PAGE = 25;
 const STATUS_FILTERS = [
   "",
   "In Stock",
@@ -30,9 +30,9 @@ const STATUS_FILTERS = [
 ];
 const TYPE_FILTERS = [
   "",
-  "Generic Medicine",
+  "General Medicine",
   "Ayurvedic Medicine",
-  "Surgery Related Item",
+  "Surgical Medicine",
 ];
 
 export default function PharmacyMedicineList() {
@@ -70,10 +70,9 @@ export default function PharmacyMedicineList() {
   }, []);
 
   const filtered = medicines.filter((m) => {
-    const matchName =
-      m.drugName.toLowerCase().includes(search.toLowerCase()) ||
-      m.genericName?.toLowerCase().includes(search.toLowerCase()) ||
-      m.batchNumber?.toLowerCase().includes(search.toLowerCase());
+    const matchName = (m.drugName || "")
+      .toLowerCase()
+      .includes(search.toLowerCase());
     const matchStatus = !statusFilter || getMedicineStatus(m) === statusFilter;
     const matchType = !typeFilter || m.medicineType === typeFilter;
     return matchName && matchStatus && matchType;
@@ -149,7 +148,7 @@ export default function PharmacyMedicineList() {
             setSearch(s);
             setPage(1);
           }}
-          placeholder="Search drug, generic name, batch..."
+          placeholder="Search tablet name..."
         />
         <div className="flex items-center gap-1.5 p-1 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-full shadow-2xs overflow-x-auto max-w-full">
           {STATUS_FILTERS.map((s) => {
@@ -207,14 +206,11 @@ export default function PharmacyMedicineList() {
         <TableCard>
           <thead>
             <tr>
-              <Th>Medicine</Th>
+              <Th>Tablet</Th>
               <Th>Type</Th>
-              <Th>Category</Th>
-              <Th>Batch</Th>
-              <Th>Purchase ₹</Th>
-              <Th>Selling ₹</Th>
-              <Th>Stock</Th>
-              <Th>Expiry</Th>
+              <Th>Purchase ₹/Strip</Th>
+              <Th>Selling ₹/Strip</Th>
+              <Th>Stock (Tablets)</Th>
               <Th>Status</Th>
               <Th>Actions</Th>
             </tr>
@@ -232,7 +228,7 @@ export default function PharmacyMedicineList() {
                       onClick={() => setViewing(m)}
                       className="font-extrabold text-slate-900 dark:text-white hover:underline text-left"
                     >
-                      {m.drugName}
+                      {m.drugName || "Unnamed"}
                     </button>
                   </Td>
                   <Td>
@@ -240,8 +236,6 @@ export default function PharmacyMedicineList() {
                       {m.medicineType}
                     </span>
                   </Td>
-                  <Td>{m.category}</Td>
-                  <Td className="font-mono text-xs">{m.batchNumber}</Td>
                   <Td className="font-bold">₹{m.purchasePrice}</Td>
                   <Td className="text-[#0f4a29] dark:text-[#52b788] font-bold">
                     ₹{m.sellingPrice}
@@ -252,7 +246,6 @@ export default function PharmacyMedicineList() {
                   <Td className="font-extrabold text-slate-900 dark:text-white">
                     {m.quantity}
                   </Td>
-                  <Td>{m.expiryDate}</Td>
                   <Td>
                     <PharmacyStatusBadge status={status} />
                   </Td>

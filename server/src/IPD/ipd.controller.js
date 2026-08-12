@@ -70,6 +70,7 @@ function buildPatientData(body) {
       gender: body.gender,
       phone: body.phone || null,
       aadhar: body.aadhar || null,
+      address: body.address || null,
 
       admissionDate: new Date(body.admissionDate),
       admissionTime: body.admissionTime,

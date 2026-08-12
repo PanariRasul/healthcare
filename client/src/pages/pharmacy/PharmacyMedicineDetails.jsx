@@ -7,17 +7,14 @@ import {
   Pill,
   Package,
   DollarSign,
-  Truck,
   Plus,
   Minus,
   RefreshCw,
-  History,
   Loader2,
-  Boxes,
 } from "lucide-react";
 import { api } from "../../lib/api";
 
-const STOCK_UNIT_OPTIONS = ["Box", "Sheet", "Tablet"];
+const STOCK_UNIT_OPTIONS = ["Strip", "Tablet"];
 
 export default function PharmacyMedicineDetails({
   medicine: initMed,
@@ -54,12 +51,7 @@ export default function PharmacyMedicineDetails({
       setStockError("Enter a reason.");
       return;
     }
-    const multiplier =
-      stockUnit === "Box"
-        ? (med.tabletsPerSheet || 1) * (med.sheetsPerBox || 1)
-        : stockUnit === "Sheet"
-          ? med.tabletsPerSheet || 1
-          : 1;
+    const multiplier = stockUnit === "Strip" ? med.tabletsPerStrip || 1 : 1;
     const qtyInTablets = qty * multiplier;
     if (stockAction === "reduce" && qtyInTablets > med.quantity) {
       setStockError("Cannot reduce more than current stock.");
@@ -91,15 +83,15 @@ export default function PharmacyMedicineDetails({
     }
   };
 
-  const expiryDiff = Math.ceil(
-    (new Date(med.expiryDate) - new Date()) / (1000 * 60 * 60 * 24),
-  );
+  const expiryDiff = med.expiryDate
+    ? Math.ceil((new Date(med.expiryDate) - new Date()) / (1000 * 60 * 60 * 24))
+    : null;
 
   return (
     <div className="space-y-6 font-sans text-slate-900 bg-[#f4f5f7] dark:bg-slate-950 p-2 sm:p-4 rounded-3xl">
       <PageHeader
-        title={med.drugName}
-        subtitle={`Batch: ${med.batchNumber} • Category: ${med.category}`}
+        title={med.drugName || "Unnamed Medicine"}
+        subtitle={med.medicineType || ""}
         action={
           <button
             onClick={onBack}
@@ -111,16 +103,11 @@ export default function PharmacyMedicineDetails({
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 max-w-6xl">
-        <SectionCard title="Drug Information" icon={Pill}>
+        <SectionCard title="Tablet Information" icon={Pill}>
           <div className="grid grid-cols-2 gap-3 text-xs font-medium">
             {[
-              { label: "Medicine ID", val: med.serialNumber },
-              { label: "Drug Name", val: med.drugName },
-              { label: "Generic Name", val: med.genericName },
+              { label: "Tablet Name", val: med.drugName },
               { label: "Medicine Type", val: med.medicineType },
-              { label: "Category", val: med.category },
-              { label: "Manufacturer", val: med.manufacturer },
-              { label: "Batch Number", val: med.batchNumber },
             ].map((item) => (
               <div key={item.label}>
                 <div className="text-slate-400 text-[10px] uppercase font-bold mb-0.5">
@@ -138,7 +125,7 @@ export default function PharmacyMedicineDetails({
           <div className="grid grid-cols-3 gap-3">
             <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-3 border border-slate-100 dark:border-slate-800 text-center">
               <div className="text-[10px] font-bold uppercase text-slate-400">
-                Purchase
+                Purchase / Strip
               </div>
               <div className="font-extrabold text-sm text-slate-900 dark:text-white">
                 ₹{med.purchasePrice}
@@ -146,7 +133,7 @@ export default function PharmacyMedicineDetails({
             </div>
             <div className="bg-[#0f4a29]/10 rounded-2xl p-3 border border-[#0f4a29]/20 text-center">
               <div className="text-[10px] font-bold uppercase text-slate-400">
-                Selling
+                Selling / Strip
               </div>
               <div className="font-extrabold text-sm text-[#0f4a29] dark:text-[#52b788]">
                 ₹{med.sellingPrice}
@@ -164,28 +151,26 @@ export default function PharmacyMedicineDetails({
             </div>
           </div>
 
-          {/* Per-Sheet / Per-Tablet breakdown — already computed server-side
-              (see pharmacy.mappers.js fromDbMedicine), just surfaced here. */}
+          {/* Per-Tablet breakdown — already computed server-side (see
+              pharmacy.mappers.js fromDbMedicine), just surfaced here. */}
           <div className="text-[10px] font-bold uppercase text-slate-400 mt-4 mb-2">
-            Per-Unit Cost (Box → Sheet → Tablet)
+            Per Tablet Cost (Auto)
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-3 border border-slate-100 dark:border-slate-800">
               <div className="text-[10px] font-bold uppercase text-slate-400">
-                Purchase / Sheet · / Tablet
+                Purchase / Tablet
               </div>
               <div className="font-extrabold text-sm text-slate-900 dark:text-white">
-                ₹{(med.purchasePricePerSheet || 0).toFixed(2)} · ₹
-                {(med.purchasePricePerTablet || 0).toFixed(2)}
+                ₹{(med.purchasePricePerTablet || 0).toFixed(2)}
               </div>
             </div>
             <div className="bg-[#0f4a29]/10 rounded-2xl p-3 border border-[#0f4a29]/20">
               <div className="text-[10px] font-bold uppercase text-slate-400">
-                Selling / Sheet · / Tablet
+                Selling / Tablet
               </div>
               <div className="font-extrabold text-sm text-[#0f4a29] dark:text-[#52b788]">
-                ₹{(med.sellingPricePerSheet || 0).toFixed(2)} · ₹
-                {(med.sellingPricePerTablet || 0).toFixed(2)}
+                ₹{(med.sellingPricePerTablet || 0).toFixed(2)}
               </div>
             </div>
           </div>
@@ -206,59 +191,59 @@ export default function PharmacyMedicineDetails({
                 Reorder Level
               </div>
               <div className="font-extrabold text-base text-slate-900 dark:text-white">
-                {med.reorderLevel}
+                {med.reorderLevel || 0}
               </div>
             </div>
-            <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-3 border border-slate-100 dark:border-slate-800 sm:col-span-2">
+            <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-3 border border-slate-100 dark:border-slate-800">
+              <div className="text-[10px] font-bold uppercase text-slate-400">
+                Purchase Date
+              </div>
+              <div className="font-extrabold text-xs text-slate-900 dark:text-white">
+                {med.purchaseDate || "—"}
+              </div>
+            </div>
+            <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-3 border border-slate-100 dark:border-slate-800">
               <div className="text-[10px] font-bold uppercase text-slate-400">
                 Expiry Date
               </div>
               <div className="font-extrabold text-xs text-slate-900 dark:text-white">
-                {med.expiryDate} (
-                {expiryDiff <= 0 ? "Expired" : `${expiryDiff} days`})
+                {med.expiryDate
+                  ? `${med.expiryDate} (${expiryDiff <= 0 ? "Expired" : `${expiryDiff} days`})`
+                  : "—"}
               </div>
             </div>
           </div>
         </SectionCard>
 
-        <SectionCard title="Packing Details" icon={Boxes}>
+        <SectionCard title="Strip / Tablet Breakdown" icon={Pill}>
           <div className="grid grid-cols-2 gap-3 text-xs font-medium mb-4">
             <div>
               <div className="text-slate-400 text-[10px] uppercase font-bold mb-0.5">
-                Unit Type
+                Tablets Per Strip
               </div>
               <div className="text-slate-900 dark:text-white font-extrabold">
-                {med.unitType || "—"}
+                {med.tabletsPerStrip || "—"}
               </div>
             </div>
             <div>
               <div className="text-slate-400 text-[10px] uppercase font-bold mb-0.5">
-                Packing Ratio
+                Total Tablets (Auto)
               </div>
               <div className="text-slate-900 dark:text-white font-extrabold">
-                1 Box = {med.sheetsPerBox} Sheets • 1 Sheet ={" "}
-                {med.tabletsPerSheet} {med.unitType || "Tablet"}
+                {med.totalTablets || 0}
               </div>
             </div>
           </div>
           <div className="text-[10px] font-bold uppercase text-slate-400 mb-2">
             Current / Available Stock
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3">
             <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-3 border border-slate-100 dark:border-slate-800 text-center">
               <div className="text-[10px] font-bold uppercase text-slate-400">
-                Boxes
+                Strips
               </div>
               <div className="font-extrabold text-sm text-slate-900 dark:text-white">
-                {med.availableBoxes}
-              </div>
-            </div>
-            <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-3 border border-slate-100 dark:border-slate-800 text-center">
-              <div className="text-[10px] font-bold uppercase text-slate-400">
-                Sheets
-              </div>
-              <div className="font-extrabold text-sm text-slate-900 dark:text-white">
-                {med.availableSheets}
+                {med.availableStrips}
               </div>
             </div>
             <div className="bg-[#0f4a29]/10 rounded-2xl p-3 border border-[#0f4a29]/20 text-center">
@@ -268,17 +253,6 @@ export default function PharmacyMedicineDetails({
               <div className="font-extrabold text-sm text-[#0f4a29] dark:text-[#52b788]">
                 {med.availableTablets}
               </div>
-            </div>
-          </div>
-        </SectionCard>
-
-        <SectionCard title="Supplier Details" icon={Truck}>
-          <div className="text-xs font-medium">
-            <div className="text-slate-400 text-[10px] uppercase font-bold mb-0.5">
-              Supplier Name
-            </div>
-            <div className="text-slate-900 dark:text-white font-extrabold">
-              {med.supplierName || "—"}
             </div>
           </div>
         </SectionCard>

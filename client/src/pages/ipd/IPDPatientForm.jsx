@@ -47,6 +47,7 @@ const defaultForm = {
   gender: "",
   phone: "",
   aadhar: "",
+  address: "",
   admissionDate: new Date().toISOString().split("T")[0],
   admissionTime: new Date().toTimeString().slice(0, 5),
   deposit: "",
@@ -392,6 +393,15 @@ export default function IPDPatientForm({ editPatient, onDone }) {
               onChange={set("aadhar")}
               placeholder="XXXX-XXXX-XXXX"
             />
+            <div className="sm:col-span-2 lg:col-span-3">
+              <FormTextarea
+                label="Address"
+                value={form.address}
+                onChange={set("address")}
+                placeholder="House/Street, Village or Town, District, State, PIN"
+                rows={2}
+              />
+            </div>
           </div>
         </SectionCard>
 

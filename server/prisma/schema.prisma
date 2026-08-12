@@ -137,6 +137,7 @@ model IPD_Patient {
   gender       String
   phone        String?
   aadhar       String?
+  address      String?
 
   admissionDate DateTime
   admissionTime String
@@ -348,42 +349,48 @@ model Category {
 // Which broad category of medicine/item this is — separate from `Category`
 // (which is a free-text, admin-defined grouping like "Antibiotics" or "Pain
 // Relief"). This is a fixed, clinic-wide classification used for filtering
-// and reporting across the whole inventory.
+// and reporting across the whole inventory. DB values unchanged (GENERIC /
+// SURGICAL) — only the display labels changed (see pharmacy.mappers.js):
+// GENERIC -> "General Medicine", SURGICAL -> "Surgical Medicine".
 enum MedicineType {
-  GENERIC // Generic / allopathic medicines
+  GENERIC // General / allopathic medicines (displayed as "General Medicine")
   AYURVEDIC // Ayurvedic medicines
-  SURGICAL // Surgery-related items (dressings, sutures, disposables, etc.)
+  SURGICAL // Surgery-related items (displayed as "Surgical Medicine")
 }
 
+// Simplified inventory model: everything except id/timestamps is optional
+// so a record can be created with as little as just a name. Packing was
+// collapsed from a Box → Sheet → Tablet hierarchy down to a single
+// Strip → Tablet hierarchy — purchasePrice/sellingPrice are now PER STRIP
+// (previously per box).
 model medicine {
-  id            String       @id @default(cuid())
-  serialNumber  String       @unique
-  drugName      String
+  id            String        @id @default(cuid())
+  serialNumber  String?       @unique
+  drugName      String?
   genericName   String?
-  categoryId    String
-  medicineType  MedicineType @default(GENERIC)
+  categoryId    String?
+  medicineType  MedicineType? @default(GENERIC)
   manufacturer  String?
-  batchNumber   String
-  purchasePrice Float
-  sellingPrice  Float
+  batchNumber   String?
+  purchasePrice Float?        @default(0) // per strip
+  sellingPrice  Float?        @default(0) // per strip
 
-  unitsPerPack    Int      @default(1)
-  quantity        Int      @default(0)
+  // Strip → Tablet packing + stock, all optional/manual.
+  totalStrips     Int?     @default(0) // how many strips purchased (manual entry)
+  tabletsPerStrip Int?     @default(0) // how many tablets in one strip (manual entry)
+  totalTablets    Int?     @default(0) // auto = totalStrips * tabletsPerStrip
+  quantity        Int      @default(0) // current stock, always tracked in tablets
   initialQuantity Int      @default(0)
-  reorderLevel    Int      @default(0)
-  expiryDate      DateTime @db.Date
+  reorderLevel    Int?     @default(0)
+  purchaseDate    DateTime? @db.Date
+  expiryDate      DateTime? @db.Date
   supplierName    String?
   notes           String?
   unitType        UnitType @default(TABLET)
-  sheetsPerBox    Int      @default(1)
-  tabletsPerSheet Int      @default(1)
-  boxesPurchased  Int      @default(0)
-  totalSheets     Int      @default(0)
-  totalTablets    Int      @default(0)
 
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
-  category            Category             @relation(fields: [categoryId], references: [id])
+  category            Category?            @relation(fields: [categoryId], references: [id])
   prescribedMedicines PrescribedMedicine[]
   stockHistory        StockHistory[]
   ipdMedicines        IPD_Medicine[]
@@ -507,12 +514,13 @@ enum UnitType {
   OTHER
 }
 
-// Which level of the Box → Sheet → Tablet hierarchy a stock update was
-// entered in. Nullable on StockHistory so pre-existing rows (before this
-// feature) remain valid.
+// Which level of the Strip → Tablet hierarchy a stock update was entered
+// in. Nullable on StockHistory so pre-existing rows (before this feature)
+// remain valid. NOTE: previously had a third level (BOX); the Box/Sheet
+// hierarchy was collapsed down to just Strip/Tablet — old rows with
+// unit = BOX or SHEET will need a data migration/backfill if any exist.
 enum StockUnit {
-  BOX
-  SHEET
+  STRIP
   TABLET
 }
 

@@ -178,6 +178,7 @@ export default function IPDPatientDetails({
               { label: "Phone", val: dash(p.phone) },
               { label: "Aadhar", val: dash(p.aadhar) },
               { label: "Status", val: <StatusBadge status={p.status} /> },
+              { label: "Address", val: dash(p.address) },
             ]}
           />
         </SectionCard>

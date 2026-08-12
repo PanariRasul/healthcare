@@ -1,21 +1,34 @@
 // client/src/pages/admin/AdminSalaryManagement.jsx
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api } from "../../lib/api";
 import { PageHeader, TableCard, Th, Td } from "../../components/UI";
 import {
   Wallet,
   Loader2,
   RefreshCw,
-  Check,
   X,
   Pencil,
   Trash2,
-  History,
+  FileText,
   Banknote,
   ChevronLeft,
   ChevronRight,
   Undo2,
+  Download,
+  Lock,
 } from "lucide-react";
+
+// Edit these to match the actual hospital — shown on every printed/downloaded
+// salary slip alongside the logo at client/public/healthcare.jpg (served at
+// "/healthcare.jpg").
+const HOSPITAL = {
+  name: "Virupakshipuram Paralysis Centre",
+  address:
+    "No.6, G R Plaza, 24th Main Rd, opp. Empire Restaurant, 5th Phase, Ayodya Nagar, J P Nagar Phase 5, J. P. Nagar, Bengaluru,Karnataka 560078",
+  phone: "+91 6364231861",
+  email: "virupakshipuramparalysishealth@gmail.com",
+  logo: "/healthcare.jpg",
+};
 
 const MONTH_NAMES = [
   "January",
@@ -40,9 +53,23 @@ const STATUS_STYLES = {
   PAID: "bg-[#0f4a29]/10 dark:bg-[#52b788]/20 text-[#0f4a29] dark:text-[#52b788] border-[#0f4a29]/20",
 };
 
+// The slip only ever shows two states to keep it readable for an employee:
+// PAID stays "Paid", both DRAFT and FINALIZED read as "Pending" (still
+// awaiting disbursement). The admin table elsewhere keeps the 3-state detail.
+const SLIP_STATUS = (status) => (status === "PAID" ? "Paid" : "Pending");
+
 function money(value) {
   const num = Number(value ?? 0);
   return `₹${num.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+}
+
+function formatDate(d) {
+  if (!d) return "—";
+  return new Date(d).toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 function suggestLop({ leaveDays, absentDays, paidLeaves }) {
@@ -51,8 +78,29 @@ function suggestLop({ leaveDays, absentDays, paidLeaves }) {
   return Math.max(0, (leaveDays || 0) + (absentDays || 0) - n);
 }
 
+// Same math as the server's deriveTotals (salary.controller.js) — used here
+// purely for a live preview while editing, before the save round-trips.
+function previewTotals({
+  baseSalary,
+  totalDays,
+  lopDays,
+  bonus,
+  otherAdjustment,
+}) {
+  const base = Number(baseSalary) || 0;
+  const days = Number(totalDays) || 0;
+  const lop = Number(lopDays) || 0;
+  const bon = Number(bonus) || 0;
+  const adj = Number(otherAdjustment) || 0;
+  const perDaySalary = days > 0 ? base / days : 0;
+  const leaveDeduction = perDaySalary * lop;
+  const netSalary = base - leaveDeduction + bon + adj;
+  return { perDaySalary, leaveDeduction, netSalary };
+}
+
 const editableFields = (s) => ({
   baseSalary: s.baseSalary,
+  totalDays: s.totalDays,
   paidLeaves: s.paidLeaves,
   lopDays: s.lopDays,
   bonus: s.bonus,
@@ -88,9 +136,10 @@ export default function AdminSalaryManagement() {
   const [paymentMethod, setPaymentMethod] = useState("");
   const [paidDate, setPaidDate] = useState("");
 
-  const [historyEmp, setHistoryEmp] = useState(null);
-  const [historyData, setHistoryData] = useState(null);
-  const [historyLoading, setHistoryLoading] = useState(false);
+  const [slipEmp, setSlipEmp] = useState(null);
+  const [slipData, setSlipData] = useState(null);
+  const [slipLoading, setSlipLoading] = useState(false);
+  const [selectedSlipId, setSelectedSlipId] = useState(null);
 
   const fetchSalaries = async () => {
     setLoading(true);
@@ -176,6 +225,7 @@ export default function AdminSalaryManagement() {
       setEditingId(null);
       setEditAttendance(null);
       fetchSalaries();
+      refreshSlipIfOpen();
     } catch (err) {
       setError(err.message || "Could not update salary record.");
     } finally {
@@ -191,6 +241,7 @@ export default function AdminSalaryManagement() {
       await api.put(`/admin/salaries/${id}/recalculate`);
       setInfo("Recalculated from current attendance.");
       fetchSalaries();
+      refreshSlipIfOpen();
     } catch (err) {
       setError(err.message || "Could not recalculate.");
     } finally {
@@ -206,6 +257,7 @@ export default function AdminSalaryManagement() {
       await api.put(`/admin/salaries/${id}/reopen`);
       setInfo("Record reopened — status set back to Finalized.");
       fetchSalaries();
+      refreshSlipIfOpen();
     } catch (err) {
       setError(err.message || "Could not reopen record.");
     } finally {
@@ -222,6 +274,7 @@ export default function AdminSalaryManagement() {
       setInfo(`Removed ${deleteTarget.employee.fullName}'s record.`);
       setDeleteTarget(null);
       fetchSalaries();
+      refreshSlipIfOpen();
     } catch (err) {
       setError(err.message || "Could not remove salary record.");
     }
@@ -245,22 +298,46 @@ export default function AdminSalaryManagement() {
       setInfo(`Marked ${payTarget.employee.fullName} as paid.`);
       setPayTarget(null);
       fetchSalaries();
+      refreshSlipIfOpen();
     } catch (err) {
       setError(err.message || "Could not mark as paid.");
     }
   };
 
-  const openHistory = async (emp) => {
-    setHistoryEmp(emp);
-    setHistoryLoading(true);
+  // Opens the Salary Slip viewer for an employee. `focusId` preselects a
+  // specific month's record (e.g. clicking "Slip" on a row); otherwise the
+  // most recent month is shown first.
+  const openSlip = async (emp, focusId) => {
+    setSlipEmp(emp);
+    setSlipLoading(true);
     try {
       const data = await api.get(`/admin/salaries/employee/${emp.id}`);
-      setHistoryData(data);
+      setSlipData(data);
+      setSelectedSlipId(focusId || data.salaries?.[0]?.id || null);
     } catch (err) {
       setError(err.message || "Could not load salary history.");
     } finally {
-      setHistoryLoading(false);
+      setSlipLoading(false);
     }
+  };
+
+  // Re-pulls the slip viewer's data without touching its open/selected
+  // state — used after an action (mark paid, edit, delete) taken elsewhere
+  // on the page so an open slip never shows stale numbers.
+  const refreshSlipIfOpen = async () => {
+    if (!slipEmp) return;
+    try {
+      const data = await api.get(`/admin/salaries/employee/${slipEmp.id}`);
+      setSlipData(data);
+    } catch {
+      // Non-fatal — the slip just won't refresh until reopened.
+    }
+  };
+
+  const closeSlip = () => {
+    setSlipEmp(null);
+    setSlipData(null);
+    setSelectedSlipId(null);
   };
 
   return (
@@ -309,7 +386,9 @@ export default function AdminSalaryManagement() {
             {MONTH_NAMES[month - 1]} {year}
           </span>
           . Present days and deductions are auto-calculated from attendance
-          logs.
+          logs. Employees who already have a record for this month — pending or
+          paid — are skipped automatically, so it's safe to run this again after
+          adding a new employee mid-month.
         </p>
         <button
           onClick={handleGenerate}
@@ -385,13 +464,24 @@ export default function AdminSalaryManagement() {
                     colSpan={10}
                     className="p-5 bg-slate-50/50 dark:bg-slate-950/40"
                   >
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+                    <div className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400 mb-2">
+                      Base & Attendance
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-4">
                       <MiniField
-                        label="Base Salary"
+                        label="Base Salary (₹)"
                         type="number"
                         value={editForm.baseSalary}
                         onChange={(v) =>
                           setEditForm((f) => ({ ...f, baseSalary: v }))
+                        }
+                      />
+                      <MiniField
+                        label="Total Working Days"
+                        type="number"
+                        value={editForm.totalDays}
+                        onChange={(v) =>
+                          setEditForm((f) => ({ ...f, totalDays: v }))
                         }
                       />
                       <MiniField
@@ -427,7 +517,11 @@ export default function AdminSalaryManagement() {
                         </select>
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+
+                    <div className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400 mb-2">
+                      Earnings & Deductions
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
                       <MiniField
                         label="Bonus (₹)"
                         type="number"
@@ -445,12 +539,13 @@ export default function AdminSalaryManagement() {
                         placeholder="e.g. Festival"
                       />
                       <MiniField
-                        label="Adjustment (±₹)"
+                        label="Other Adjustment (±₹)"
                         type="number"
                         value={editForm.otherAdjustment}
                         onChange={(v) =>
                           setEditForm((f) => ({ ...f, otherAdjustment: v }))
                         }
+                        placeholder="+ allowance, − fine/advance"
                       />
                       <MiniField
                         label="Adjustment Note"
@@ -460,7 +555,49 @@ export default function AdminSalaryManagement() {
                         }
                       />
                     </div>
-                    <div className="flex gap-2 justify-end pt-2">
+
+                    <MiniField
+                      label="Notes"
+                      value={editForm.notes}
+                      onChange={(v) => setEditForm((f) => ({ ...f, notes: v }))}
+                      placeholder="Internal note for this month's record"
+                    />
+
+                    {/* Live preview — same math as the server, so what's
+                        shown here always matches what Save will produce. */}
+                    {(() => {
+                      const preview = previewTotals(editForm);
+                      return (
+                        <div className="grid grid-cols-3 gap-3 mt-4">
+                          <div className="bg-slate-100 dark:bg-slate-800/60 rounded-2xl p-3 border border-slate-200 dark:border-slate-800">
+                            <div className="text-[10px] font-bold uppercase text-slate-400">
+                              Per Day Salary (Auto)
+                            </div>
+                            <div className="font-extrabold text-sm text-slate-900 dark:text-white">
+                              {money(preview.perDaySalary)}
+                            </div>
+                          </div>
+                          <div className="bg-rose-50 dark:bg-rose-500/10 rounded-2xl p-3 border border-rose-200 dark:border-rose-500/20">
+                            <div className="text-[10px] font-bold uppercase text-slate-400">
+                              Leave Deduction (Auto)
+                            </div>
+                            <div className="font-extrabold text-sm text-rose-500">
+                              -{money(preview.leaveDeduction)}
+                            </div>
+                          </div>
+                          <div className="bg-[#0f4a29]/10 rounded-2xl p-3 border border-[#0f4a29]/20">
+                            <div className="text-[10px] font-bold uppercase text-slate-400">
+                              Net Salary (Auto)
+                            </div>
+                            <div className="font-extrabold text-sm text-[#0f4a29] dark:text-[#52b788]">
+                              {money(preview.netSalary)}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    <div className="flex gap-2 justify-end pt-4">
                       <button
                         onClick={() => {
                           setEditingId(null);
@@ -483,7 +620,7 @@ export default function AdminSalaryManagement() {
                   <>
                     <Td className="font-extrabold text-slate-900 dark:text-white">
                       <button
-                        onClick={() => openHistory(s.employee)}
+                        onClick={() => openSlip(s.employee, s.id)}
                         className="hover:text-[#0f4a29] hover:underline text-left"
                       >
                         {s.employee.fullName}
@@ -563,10 +700,11 @@ export default function AdminSalaryManagement() {
                           </button>
                         )}
                         <button
-                          onClick={() => openHistory(s.employee)}
-                          className="p-1 text-slate-400 hover:text-slate-700"
+                          onClick={() => openSlip(s.employee, s.id)}
+                          title="View Salary Slip"
+                          className="p-1 text-slate-400 hover:text-[#0f4a29]"
                         >
-                          <History className="w-3.5 h-3.5" />
+                          <FileText className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     </Td>
@@ -644,6 +782,19 @@ export default function AdminSalaryManagement() {
           </div>
         </div>
       )}
+
+      {/* Salary Slip Viewer */}
+      {slipEmp && (
+        <SalarySlipModal
+          employee={slipEmp}
+          salaries={slipData?.salaries || []}
+          loading={slipLoading}
+          selectedId={selectedSlipId}
+          onSelect={setSelectedSlipId}
+          onClose={closeSlip}
+          onMarkPaid={(s) => openPay(s)}
+        />
+      )}
     </div>
   );
 }
@@ -674,6 +825,418 @@ function MiniField({ label, value, onChange, type = "text", placeholder }) {
         placeholder={placeholder}
         className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 dark:text-white focus:outline-none focus:border-[#0f4a29]"
       />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Salary Slip Viewer
+//
+// Shows a professional, printable payslip for one employee/month, with a
+// month picker down the side so any past month can be pulled up without
+// leaving the modal. "Download PDF" uses the browser's native print flow
+// (Save as PDF) against a print-only stylesheet that hides everything on
+// the page except the slip itself — this needs no extra libraries and
+// works fully offline, which matters for on-prem hospital deployments.
+// ---------------------------------------------------------------------
+function SalarySlipModal({
+  employee,
+  salaries,
+  loading,
+  selectedId,
+  onSelect,
+  onClose,
+  onMarkPaid,
+}) {
+  const printRef = useRef(null);
+  const selected = salaries.find((s) => s.id === selectedId) || null;
+
+  const handleDownload = () => {
+    window.print();
+  };
+
+  const slipNumber = selected
+    ? `PAY-${selected.year}${String(selected.month).padStart(2, "0")}-${employee.id.slice(-6).toUpperCase()}`
+    : "";
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-50 p-2 sm:p-4">
+      {/* Print-only stylesheet: hides the whole app except the slip when
+          the browser print dialog (Download PDF) is triggered. */}
+      <style>{`
+        @media print {
+          body * { visibility: hidden; }
+          #salary-slip-printable, #salary-slip-printable * { visibility: visible; }
+          #salary-slip-printable {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            margin: 0;
+            padding: 24px;
+          }
+          #salary-slip-modal-chrome { display: none !important; }
+        }
+      `}</style>
+
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[28px] shadow-2xl w-full max-w-5xl max-h-[92vh] flex overflow-hidden">
+        {/* Month sidebar */}
+        <div
+          id="salary-slip-modal-chrome"
+          className="w-48 sm:w-56 shrink-0 border-r border-slate-100 dark:border-slate-800 flex flex-col"
+        >
+          <div className="p-4 border-b border-slate-100 dark:border-slate-800">
+            <p className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">
+              Salary Slips
+            </p>
+            <p className="text-xs font-extrabold text-slate-900 dark:text-white truncate">
+              {employee.fullName}
+            </p>
+          </div>
+          <div className="flex-1 overflow-y-auto p-2 space-y-1">
+            {loading ? (
+              <div className="flex items-center justify-center py-8 text-slate-400 text-xs font-bold">
+                <Loader2 className="w-4 h-4 animate-spin mr-2" /> Loading...
+              </div>
+            ) : salaries.length === 0 ? (
+              <p className="text-slate-400 text-xs font-medium p-3">
+                No salary records yet.
+              </p>
+            ) : (
+              salaries.map((s) => {
+                const active = s.id === selectedId;
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => onSelect(s.id)}
+                    className={`w-full text-left px-3 py-2 rounded-xl text-xs font-bold flex items-center justify-between gap-2 transition-all ${
+                      active
+                        ? "bg-[#0f4a29] text-white"
+                        : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    }`}
+                  >
+                    <span>
+                      {MONTH_NAMES[s.month - 1].slice(0, 3)} {s.year}
+                    </span>
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                        s.status === "PAID"
+                          ? active
+                            ? "bg-white"
+                            : "bg-[#0f4a29] dark:bg-[#52b788]"
+                          : active
+                            ? "bg-white/60"
+                            : "bg-amber-400"
+                      }`}
+                    />
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        {/* Slip content */}
+        <div className="flex-1 flex flex-col min-w-0">
+          <div
+            id="salary-slip-modal-chrome"
+            className="flex items-center justify-between gap-3 p-4 border-b border-slate-100 dark:border-slate-800 shrink-0"
+          >
+            <div className="flex items-center gap-2">
+              {selected && selected.status === "PAID" && (
+                <span className="flex items-center gap-1 text-[10px] font-extrabold text-slate-400">
+                  <Lock className="w-3 h-3" /> Locked — paid records can't be
+                  edited
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {selected && selected.status === "FINALIZED" && (
+                <button
+                  onClick={() => onMarkPaid({ ...selected, employee })}
+                  className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold px-4 py-2 rounded-full shadow-xs"
+                >
+                  <Banknote className="w-3.5 h-3.5" /> Mark as Paid
+                </button>
+              )}
+              <button
+                onClick={handleDownload}
+                disabled={!selected}
+                className="flex items-center gap-1.5 bg-[#0f4a29] hover:bg-[#165a34] text-white text-xs font-extrabold px-4 py-2 rounded-full shadow-xs disabled:opacity-50"
+              >
+                <Download className="w-3.5 h-3.5" /> Download PDF
+              </button>
+              <button
+                onClick={onClose}
+                className="p-2 rounded-full text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-slate-100 dark:bg-slate-950">
+            {!selected ? (
+              <div className="flex items-center justify-center h-full text-slate-400 text-xs font-bold py-16">
+                {loading
+                  ? "Loading salary slip..."
+                  : "Select a month to view its slip."}
+              </div>
+            ) : (
+              <div
+                id="salary-slip-printable"
+                ref={printRef}
+                className="bg-white text-slate-900 rounded-2xl shadow-sm border border-slate-200 p-6 sm:p-8 max-w-3xl mx-auto"
+              >
+                {/* Letterhead */}
+                <div className="flex items-start justify-between gap-4 pb-4 border-b-2 border-slate-800">
+                  <div className="flex items-center gap-3">
+                    <img
+                      src={HOSPITAL.logo}
+                      alt="Hospital Logo"
+                      className="w-14 h-14 object-contain rounded-xl shrink-0"
+                    />
+                    <div>
+                      <p className="font-extrabold text-lg leading-tight">
+                        {HOSPITAL.name}
+                      </p>
+                      <p className="text-[11px] text-slate-500 leading-snug max-w-xs">
+                        {HOSPITAL.address}
+                      </p>
+                      <p className="text-[11px] text-slate-500">
+                        {HOSPITAL.phone} • {HOSPITAL.email}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="font-extrabold text-sm uppercase tracking-wide">
+                      Salary Slip
+                    </p>
+                    <p className="text-[11px] text-slate-500">{slipNumber}</p>
+                    <p className="text-[11px] text-slate-500">
+                      {MONTH_NAMES[selected.month - 1]} {selected.year}
+                    </p>
+                    <span
+                      className={`inline-block mt-1 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border ${
+                        selected.status === "PAID"
+                          ? "bg-[#0f4a29]/10 text-[#0f4a29] border-[#0f4a29]/20"
+                          : "bg-amber-50 text-amber-700 border-amber-200"
+                      }`}
+                    >
+                      {SLIP_STATUS(selected.status)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Employee details */}
+                <div className="grid grid-cols-2 gap-x-6 gap-y-2 py-4 border-b border-slate-200 text-xs">
+                  <SlipRow label="Employee Name" value={employee.fullName} />
+                  <SlipRow label="Employee ID" value={employee.id} mono />
+                  <SlipRow label="Designation" value={employee.designation} />
+                  <SlipRow label="Department" value={employee.department} />
+                  <SlipRow
+                    label="Joining Date"
+                    value={formatDate(employee.joiningDate)}
+                  />
+                  <SlipRow label="Phone" value={employee.phone} />
+                  <SlipRow label="Bank Name" value={employee.bankName} />
+                  <SlipRow
+                    label="Account No."
+                    value={employee.bankAccountNo}
+                    mono
+                  />
+                  <SlipRow label="IFSC Code" value={employee.ifscCode} mono />
+                  <SlipRow
+                    label="Pay Period"
+                    value={`${MONTH_NAMES[selected.month - 1]} ${selected.year}`}
+                  />
+                </div>
+
+                {/* Attendance summary */}
+                <div className="grid grid-cols-5 gap-2 py-4 border-b border-slate-200 text-center">
+                  {[
+                    ["Working Days", selected.totalDays],
+                    ["Present", selected.presentDays],
+                    ["On Leave", selected.leaveDays],
+                    ["Absent", selected.absentDays],
+                    ["Paid Leaves", selected.paidLeaves],
+                  ].map(([label, val]) => (
+                    <div key={label}>
+                      <p className="text-sm font-extrabold">{val}</p>
+                      <p className="text-[10px] text-slate-500 uppercase tracking-wide">
+                        {label}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Earnings / Deductions breakdown */}
+                <div className="grid grid-cols-2 gap-6 py-4 border-b border-slate-200">
+                  <div>
+                    <p className="text-[11px] font-extrabold uppercase tracking-wide text-slate-500 mb-2">
+                      Earnings
+                    </p>
+                    <div className="space-y-1.5 text-xs">
+                      <div className="flex justify-between">
+                        <span>Base Salary</span>
+                        <span className="font-bold">
+                          {money(selected.baseSalary)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>
+                          Bonus
+                          {selected.bonusReason
+                            ? ` (${selected.bonusReason})`
+                            : ""}
+                        </span>
+                        <span className="font-bold">
+                          {money(selected.bonus)}
+                        </span>
+                      </div>
+                      {selected.otherAdjustment > 0 && (
+                        <div className="flex justify-between">
+                          <span>
+                            Other Adjustment
+                            {selected.adjustmentNote
+                              ? ` (${selected.adjustmentNote})`
+                              : ""}
+                          </span>
+                          <span className="font-bold">
+                            {money(selected.otherAdjustment)}
+                          </span>
+                        </div>
+                      )}
+                      <div className="flex justify-between pt-1.5 border-t border-slate-200 font-extrabold">
+                        <span>Gross Earnings</span>
+                        <span>
+                          {money(
+                            (selected.baseSalary || 0) +
+                              (selected.bonus || 0) +
+                              Math.max(selected.otherAdjustment || 0, 0),
+                          )}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-extrabold uppercase tracking-wide text-slate-500 mb-2">
+                      Deductions
+                    </p>
+                    <div className="space-y-1.5 text-xs">
+                      <div className="flex justify-between">
+                        <span>Per Day Salary</span>
+                        <span className="font-bold">
+                          {money(selected.perDaySalary)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>LOP Days</span>
+                        <span className="font-bold">{selected.lopDays}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Leave Deduction</span>
+                        <span className="font-bold text-rose-600">
+                          -{money(selected.leaveDeduction)}
+                        </span>
+                      </div>
+                      {selected.otherAdjustment < 0 && (
+                        <div className="flex justify-between">
+                          <span>
+                            Other Adjustment
+                            {selected.adjustmentNote
+                              ? ` (${selected.adjustmentNote})`
+                              : ""}
+                          </span>
+                          <span className="font-bold text-rose-600">
+                            -{money(Math.abs(selected.otherAdjustment))}
+                          </span>
+                        </div>
+                      )}
+                      <div className="flex justify-between pt-1.5 border-t border-slate-200 font-extrabold">
+                        <span>Total Deductions</span>
+                        <span className="text-rose-600">
+                          -
+                          {money(
+                            (selected.leaveDeduction || 0) +
+                              Math.max(-(selected.otherAdjustment || 0), 0),
+                          )}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Net Salary */}
+                <div className="flex items-center justify-between py-4 border-b border-slate-200">
+                  <span className="text-sm font-extrabold uppercase tracking-wide">
+                    Net Salary
+                  </span>
+                  <span className="text-xl font-extrabold text-[#0f4a29]">
+                    {money(selected.netSalary)}
+                  </span>
+                </div>
+
+                {/* Payment info */}
+                <div className="grid grid-cols-2 gap-x-6 gap-y-1 py-4 text-xs">
+                  <SlipRow
+                    label="Payment Status"
+                    value={SLIP_STATUS(selected.status)}
+                  />
+                  <SlipRow
+                    label="Payment Method"
+                    value={selected.paymentMethod || "—"}
+                  />
+                  <SlipRow
+                    label="Paid Date"
+                    value={
+                      selected.paidDate ? formatDate(selected.paidDate) : "—"
+                    }
+                  />
+                  {selected.notes && (
+                    <SlipRow label="Notes" value={selected.notes} />
+                  )}
+                </div>
+
+                {/* Signatures */}
+                <div className="grid grid-cols-2 gap-6 pt-6 mt-2">
+                  <div className="text-center">
+                    <div className="h-12 border-b border-slate-300" />
+                    <p className="text-[11px] font-bold text-slate-600 mt-1">
+                      Employee Signature
+                    </p>
+                  </div>
+                  <div className="text-center">
+                    <div className="h-12 border-b border-slate-300" />
+                    <p className="text-[11px] font-bold text-slate-600 mt-1">
+                      Authorized Signature
+                    </p>
+                    <p className="text-[10px] text-slate-400">
+                      {HOSPITAL.name}
+                    </p>
+                  </div>
+                </div>
+
+                <p className="text-center text-[10px] text-slate-400 pt-4 mt-2 border-t border-slate-200">
+                  This is a computer-generated salary slip and is valid even
+                  without a signature.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SlipRow({ label, value, mono }) {
+  return (
+    <div className="flex justify-between gap-3">
+      <span className="text-slate-500">{label}</span>
+      <span className={`font-bold text-right ${mono ? "font-mono" : ""}`}>
+        {value || "—"}
+      </span>
     </div>
   );
 }

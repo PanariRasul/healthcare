@@ -12,6 +12,8 @@ import {
 import { api } from "../../lib/api";
 
 function getExpiryInfo(med) {
+  // Expiry is optional now — medicines without one just aren't tracked here.
+  if (!med.expiryDate) return { label: "Safe", diffDays: null, urgency: 0 };
   const today = new Date();
   const expiry = new Date(med.expiryDate);
   const diffDays = Math.ceil((expiry - today) / (1000 * 60 * 60 * 24));
@@ -49,10 +51,8 @@ export default function PharmacyExpiryAlerts() {
     .filter((m) => m.urgency >= 2)
     .sort((a, b) => a.diffDays - b.diffDays);
 
-  const filtered = alertMeds.filter(
-    (m) =>
-      m.drugName.toLowerCase().includes(search.toLowerCase()) ||
-      m.batchNumber?.toLowerCase().includes(search.toLowerCase()),
+  const filtered = alertMeds.filter((m) =>
+    (m.drugName || "").toLowerCase().includes(search.toLowerCase()),
   );
 
   const expired = filtered.filter((m) => m.diffDays <= 0);
@@ -73,12 +73,12 @@ export default function PharmacyExpiryAlerts() {
         }`}
       >
         <div className="w-10 h-10 rounded-2xl bg-[#0f4a29]/10 text-[#0f4a29] dark:text-[#52b788] flex items-center justify-center font-extrabold text-sm shrink-0">
-          {med.drugName[0]}
+          {med.drugName?.[0] || "?"}
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1 flex-wrap">
             <span className="text-slate-900 dark:text-white font-extrabold text-sm">
-              {med.drugName}
+              {med.drugName || "Unnamed"}
             </span>
             <PharmacyStatusBadge
               status={isExpired ? "Expired" : "Expiring Soon"}
@@ -86,17 +86,9 @@ export default function PharmacyExpiryAlerts() {
           </div>
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 font-medium">
             <span>
-              Batch:{" "}
-              <span className="font-mono font-bold text-slate-800 dark:text-white">
-                {med.batchNumber}
-              </span>
-            </span>
-            <span>Category: {med.category}</span>
-            <span>
               Stock:{" "}
               <span className="font-bold text-slate-800 dark:text-white">
-                {med.availableBoxes} Box, {med.availableSheets} Sheet,{" "}
-                {med.availableTablets} Tablet
+                {med.availableStrips} Strip, {med.availableTablets} Tablet
               </span>
             </span>
           </div>
@@ -166,7 +158,7 @@ export default function PharmacyExpiryAlerts() {
       <SearchBar
         value={search}
         onChange={setSearch}
-        placeholder="Search medicine or batch number..."
+        placeholder="Search tablet name..."
       />
 
       {loading ? (

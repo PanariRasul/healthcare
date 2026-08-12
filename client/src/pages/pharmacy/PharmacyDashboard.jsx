@@ -43,13 +43,17 @@ export function PharmacyStatusBadge({ status }) {
 }
 
 export function getMedicineStatus(med) {
-  const today = new Date();
-  const expiry = new Date(med.expiryDate);
-  const diffDays = Math.ceil((expiry - today) / (1000 * 60 * 60 * 24));
   if (med.quantity === 0) return "Out of Stock";
-  if (diffDays <= 0) return "Expired";
-  if (diffDays <= 30) return "Expiring Soon";
-  if (med.quantity <= med.reorderLevel) return "Low Stock";
+  // Expiry is optional now — skip expiry-based statuses entirely when it
+  // hasn't been set.
+  if (med.expiryDate) {
+    const today = new Date();
+    const expiry = new Date(med.expiryDate);
+    const diffDays = Math.ceil((expiry - today) / (1000 * 60 * 60 * 24));
+    if (diffDays <= 0) return "Expired";
+    if (diffDays <= 30) return "Expiring Soon";
+  }
+  if (med.quantity <= (med.reorderLevel || 0)) return "Low Stock";
   return "In Stock";
 }
 
@@ -87,7 +91,7 @@ export default function PharmacyDashboard() {
 
   const totalMedicines = medicines.length;
   const inventoryValue = medicines.reduce(
-    (s, m) => s + m.purchasePrice * m.quantity,
+    (s, m) => s + (m.purchasePrice || 0) * (m.quantity || 0),
     0,
   );
   const lowStock = withStatus.filter((m) => m.status === "Low Stock");
@@ -369,14 +373,14 @@ export default function PharmacyDashboard() {
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div className="w-7 h-7 rounded-full bg-[#0f4a29]/10 text-[#0f4a29] flex items-center justify-center text-xs font-extrabold shrink-0">
-                        {m.drugName[0]}
+                        {m.drugName?.[0] || "?"}
                       </div>
                       <div className="min-w-0">
                         <p className="font-extrabold text-slate-900 dark:text-white truncate">
-                          {m.drugName}
+                          {m.drugName || "Unnamed"}
                         </p>
                         <p className="text-[10px] text-slate-400 font-medium">
-                          {m.category} • Batch: {m.batchNumber}
+                          {m.medicineType}
                         </p>
                       </div>
                     </div>

@@ -203,40 +203,11 @@ export default function Login() {
         return;
       }
 
-      await devAutoVerify(digits);
-    } catch {
-      setError("Network error. Please check your connection and try again.");
-      setLoading(false);
-    }
-  };
-
-  const devAutoVerify = async (digits) => {
-    try {
-      const res = await fetch(`${API_BASE}/auth/verify-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          phone: digits,
-          otp: "000000",
-          module: module.toUpperCase(),
-        }),
-      });
-      const data = await res.json();
-
-      if (!res.ok) {
-        setError(data.message || "Could not log in.");
-        return;
-      }
-
-      try {
-        setAuth(data.token, data.user, module.toUpperCase());
-        navigate(routeFor(data.user, module.toUpperCase()));
-      } catch (authErr) {
-        console.error("setAuth/navigate failed after dev auto-login:", authErr);
-        setError(
-          "Signed in, but couldn't start your session. Please refresh and try again.",
-        );
-      }
+      // OTP sent — move to the verification screen and start the resend
+      // cooldown. The user now enters the code they received by SMS.
+      setOtp("");
+      setStep("otp");
+      startResendCountdown(60);
     } catch {
       setError("Network error. Please check your connection and try again.");
     } finally {
@@ -712,10 +683,21 @@ export default function Login() {
               <input
                 type="text"
                 inputMode="numeric"
+                autoComplete="one-time-code"
+                autoFocus
                 value={otp}
                 onChange={(e) => {
                   setOtp(e.target.value.replace(/\D/g, "").slice(0, 6));
                   setError("");
+                }}
+                onPaste={(e) => {
+                  const pasted = e.clipboardData.getData("text");
+                  const digits = pasted.replace(/\D/g, "").slice(0, 6);
+                  if (digits) {
+                    e.preventDefault();
+                    setOtp(digits);
+                    setError("");
+                  }
                 }}
                 placeholder="••••••"
                 maxLength={6}
@@ -809,3 +791,4 @@ function InfoBanner({ text }) {
     </div>
   );
 }
+  

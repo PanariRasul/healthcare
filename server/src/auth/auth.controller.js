@@ -2,9 +2,6 @@
 import prisma from "../lib/prisma.js";
 import { hashPassword, comparePassword } from "./hash.js";
 import { signToken } from "./jwt.js";
-/* ===================== OTP IMPORTS — DISABLED FOR DEV =====================
-   Uncomment this block (and the matching blocks further down) to restore
-   the real OTP flow.
 import {
   generateOtp,
   canResend,
@@ -14,7 +11,6 @@ import {
   deleteOtp,
 } from "./otp.store.js";
 import { sendOtpSms } from "./sms.service.js";
-============================================================================ */
 import { normalizePhone } from "./sms.service.js";
 import { isPharmacyAdmin } from "./pharmacyAccess.js";
 
@@ -46,10 +42,12 @@ const VALID_LOGIN_CONTEXTS = [
   ...ROLE_BASED_LOGIN_CONTEXTS,
 ];
 
-/* ===================== OTP BYPASS CONST — DISABLED FOR DEV ================
+// Bypass code for local/dev testing only. OFF by default — must be turned
+// on explicitly with ALLOW_OTP_BYPASS=true in .env. Do NOT set this in
+// production; anyone who knows the code could log in as anyone without
+// receiving the SMS.
 const OTP_BYPASS_CODE = "969696";
-const OTP_BYPASS_ENABLED = process.env.ALLOW_OTP_BYPASS !== "false";
-============================================================================ */
+const OTP_BYPASS_ENABLED = process.env.ALLOW_OTP_BYPASS === "true";
 
 // Strip password before ever sending a user object back to the client.
 // Admin users additionally get a `canAccessPharmacy` flag computed from
@@ -192,11 +190,9 @@ export async function sendOtp(req, res) {
     }
     const moduleUpper = String(module || "").toUpperCase();
     if (!VALID_LOGIN_CONTEXTS.includes(moduleUpper)) {
-      return res
-        .status(400)
-        .json({
-          message: `module must be one of ${VALID_LOGIN_CONTEXTS.join(", ")}`,
-        });
+      return res.status(400).json({
+        message: `module must be one of ${VALID_LOGIN_CONTEXTS.join(", ")}`,
+      });
     }
 
     const normalized = normalizePhone(phone);
@@ -221,11 +217,9 @@ export async function sendOtp(req, res) {
     // one the way a receptionist/doctor/pharmacy user is. Check role instead.
     if (ROLE_BASED_LOGIN_CONTEXTS.includes(moduleUpper)) {
       if (user.role !== moduleUpper) {
-        return res
-          .status(403)
-          .json({
-            message: `This account does not have ${moduleUpper.toLowerCase()} access.`,
-          });
+        return res.status(403).json({
+          message: `This account does not have ${moduleUpper.toLowerCase()} access.`,
+        });
       }
     } else if (moduleUpper === HOSPITAL_LOGIN_CONTEXT) {
       // Merged OPD/IPD login — let them in if they're assigned to either one.
@@ -233,23 +227,15 @@ export async function sendOtp(req, res) {
         (m) => m === "OPD" || m === "IPD",
       );
       if (!hasHospitalAccess) {
-        return res
-          .status(403)
-          .json({
-            message: "This account is not assigned to the OPD or IPD module.",
-          });
+        return res.status(403).json({
+          message: "This account is not assigned to the OPD or IPD module.",
+        });
       }
     } else if (!user.modules.includes(moduleUpper)) {
-      return res
-        .status(403)
-        .json({
-          message: "This account is not assigned to the selected module.",
-        });
+      return res.status(403).json({
+        message: "This account is not assigned to the selected module.",
+      });
     }
-
-    /* ===================== REAL OTP SEND — DISABLED FOR DEV ===============
-       Uncomment this block (and remove the dev pass-through return below)
-       to restore actually generating + sending an OTP over SMS.
 
     if (!canResend(normalized)) {
       return res.status(429).json({
@@ -260,31 +246,27 @@ export async function sendOtp(req, res) {
     const otp = generateOtp();
     saveOtp(normalized, otp);
 
-    console.log(`[OTP] Generated OTP ${otp} for ${normalized} (module: ${moduleUpper})`);
+    console.log(
+      `[OTP] Generated OTP for ${normalized} (module: ${moduleUpper})`,
+    );
 
     try {
       await sendOtpSms(normalized, otp);
       console.log(`[OTP] SMS gateway accepted the request for ${normalized}`);
-   } catch (smsErr) {
+    } catch (smsErr) {
       deleteOtp(normalized);
 
       console.error(
         `[OTP] SMS delivery FAILED for ${normalized}:`,
-        smsErr.message
+        smsErr.message,
       );
 
       throw smsErr;
     }
 
-    return res.status(200).json({ message: "OTP sent to your registered mobile number." });
-    ======================================================================== */
-
-    // DEV MODE: OTP sending is disabled. Frontend can move straight to the
-    // "otp" step; verify-otp below accepts any 6-digit code while this is on.
-    console.log(
-      `[OTP][DEV] Skipping real OTP send for ${normalized} (module: ${moduleUpper}).`,
-    );
-    return res.status(200).json({ message: "OTP step skipped (dev mode)." });
+    return res
+      .status(200)
+      .json({ message: "OTP sent to your registered mobile number." });
   } catch (err) {
     console.error("Send OTP error:", err);
     return res
@@ -309,11 +291,9 @@ export async function verifyOtpAndLogin(req, res) {
     }
     const moduleUpper = String(module || "").toUpperCase();
     if (!VALID_LOGIN_CONTEXTS.includes(moduleUpper)) {
-      return res
-        .status(400)
-        .json({
-          message: `module must be one of ${VALID_LOGIN_CONTEXTS.join(", ")}`,
-        });
+      return res.status(400).json({
+        message: `module must be one of ${VALID_LOGIN_CONTEXTS.join(", ")}`,
+      });
     }
 
     const normalized = normalizePhone(phone);
@@ -322,32 +302,25 @@ export async function verifyOtpAndLogin(req, res) {
       `[OTP-VERIFY] Incoming request — phone raw: "${phone}", normalized: "${normalized}", otp: "${otp}", module: ${moduleUpper}`,
     );
 
-    /* ===================== REAL OTP VERIFY — DISABLED FOR DEV =============
-       Uncomment this block (and remove the dev pass-through below) to
-       restore actually checking the submitted code against the stored OTP.
-
     const submittedOtp = String(otp).trim();
     const isBypass = OTP_BYPASS_ENABLED && submittedOtp === OTP_BYPASS_CODE;
 
     if (isBypass) {
-      console.log(`[OTP-VERIFY] Bypass code used for ${normalized} — skipping real OTP check.`);
+      console.log(
+        `[OTP-VERIFY] Bypass code used for ${normalized} — skipping real OTP check.`,
+      );
       deleteOtp(normalized); // clear any pending real OTP so it can't also be replayed
     } else {
-      console.log("OTP Store BEFORE verify:", normalized);
-
       const result = verifyOtp(normalized, submittedOtp);
 
-      console.log("verifyOtp result:", result);
       if (!result.ok) {
-        console.warn(`[OTP-VERIFY] FAILED for ${normalized} — reason: ${result.reason}`);
+        console.warn(
+          `[OTP-VERIFY] FAILED for ${normalized} — reason: ${result.reason}`,
+        );
         return res.status(401).json({ message: result.reason });
       }
       console.log(`[OTP-VERIFY] OTP matched for ${normalized}`);
     }
-    ======================================================================== */
-
-    // DEV MODE: any 6-digit code is accepted, no real OTP check happens.
-    console.log(`[OTP-VERIFY][DEV] Skipping real OTP check for ${normalized}.`);
 
     console.log("Finding user...");
 
@@ -365,11 +338,9 @@ export async function verifyOtpAndLogin(req, res) {
         console.warn(
           `[OTP-VERIFY] User ${user.id} does not have the ${moduleUpper} role.`,
         );
-        return res
-          .status(403)
-          .json({
-            message: `This account does not have ${moduleUpper.toLowerCase()} access.`,
-          });
+        return res.status(403).json({
+          message: `This account does not have ${moduleUpper.toLowerCase()} access.`,
+        });
       }
     } else if (moduleUpper === HOSPITAL_LOGIN_CONTEXT) {
       // Merged OPD/IPD login — let them in if they're assigned to either one.
@@ -380,21 +351,17 @@ export async function verifyOtpAndLogin(req, res) {
         console.warn(
           `[OTP-VERIFY] User ${user.id} is not assigned to OPD or IPD. Their modules: ${user.modules}`,
         );
-        return res
-          .status(403)
-          .json({
-            message: "This account is not assigned to the OPD or IPD module.",
-          });
+        return res.status(403).json({
+          message: "This account is not assigned to the OPD or IPD module.",
+        });
       }
     } else if (!user.modules.includes(moduleUpper)) {
       console.warn(
         `[OTP-VERIFY] User ${user.id} is not assigned to module ${moduleUpper}. Their modules: ${user.modules}`,
       );
-      return res
-        .status(403)
-        .json({
-          message: "This account is not assigned to the selected module.",
-        });
+      return res.status(403).json({
+        message: "This account is not assigned to the selected module.",
+      });
     }
 
     const token = signToken({
@@ -457,11 +424,9 @@ export async function updatePassword(req, res) {
 
     const sameAsOld = await comparePassword(newPassword, user.password);
     if (sameAsOld) {
-      return res
-        .status(400)
-        .json({
-          message: "New password must be different from the current password.",
-        });
+      return res.status(400).json({
+        message: "New password must be different from the current password.",
+      });
     }
 
     const hashed = await hashPassword(newPassword);

@@ -99,13 +99,20 @@ export default function IPDDashboard() {
           color="green"
           sub="Currently admitted"
         />
-        <StatCard
-          label="Discharged"
-          value={dischargedCount}
-          icon={CheckCircle2}
-          color="green"
-          sub="Successfully treated"
-        />
+        <button
+          type="button"
+          onClick={() => navigate("/ipd/discharged")}
+          className="text-left rounded-[24px] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0f4a29]/40"
+          title="View discharged patients"
+        >
+          <StatCard
+            label="Discharged"
+            value={dischargedCount}
+            icon={CheckCircle2}
+            color="green"
+            sub="Successfully treated"
+          />
+        </button>
         <StatCard
           label="Pending Balance"
           value={`₹${totalBalance.toLocaleString()}`}
@@ -210,10 +217,18 @@ export default function IPDDashboard() {
           </div>
 
           <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-[28px] p-5 shadow-xs">
-            <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-900 dark:text-white mb-3 pb-2 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-[#0f4a29] dark:text-[#52b788]" />{" "}
-              Recent Discharges
-            </h3>
+            <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-100 dark:border-slate-800">
+              <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-900 dark:text-white flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-[#0f4a29] dark:text-[#52b788]" />{" "}
+                Recent Discharges
+              </h3>
+              <button
+                onClick={() => navigate("/ipd/discharged")}
+                className="text-xs font-extrabold text-[#0f4a29] dark:text-[#52b788] hover:underline"
+              >
+                View All →
+              </button>
+            </div>
             <div className="space-y-2">
               {recentDischarges.length === 0 ? (
                 <p className="py-4 text-xs text-slate-400 font-medium text-center">

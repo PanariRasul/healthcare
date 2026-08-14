@@ -15,6 +15,13 @@ import {
 
 // ---------- helpers ----------
 
+const DISCHARGE_STATUSES = ["Admitted", "Ready For Discharge", "Discharged"];
+
+// Money is stored as Float — round to 2 decimals so edits never introduce
+// binary rounding artifacts into totalStay/balance (mirrors the same helper
+// in ipdPayment.controller.js).
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
 async function generateSerialNumber() {
   const last = await prisma.iPD_Patient.findFirst({
     orderBy: { createdAt: "desc" },
@@ -27,9 +34,16 @@ async function generateSerialNumber() {
   return `IPD-${String(next).padStart(3, "0")}`;
 }
 
+// Kept in sync with calcSettlement() in ipdPayment.controller.js — both
+// controllers can end up computing a patient's settlement status, so they
+// need to agree (including the "Overpaid" state; see buildPatientData()
+// below for why balance is allowed to go negative here too).
 function calcSettlement(totalStay, totalPaid) {
-  if (totalPaid <= 0) return "Pending";
-  if (totalPaid >= totalStay) return "Fully Paid";
+  const stay = round2(totalStay);
+  const paid = round2(totalPaid);
+  if (paid <= 0) return "Pending";
+  if (paid > stay) return "Overpaid";
+  if (paid === stay) return "Fully Paid";
   return "Partially Paid";
 }
 
@@ -38,8 +52,24 @@ function toNum(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
-// Normalizes incoming body into the flat patient fields + computed totals
-function buildPatientData(body) {
+// Normalizes incoming body into the flat patient fields + computed totals.
+//
+// `existingTotalPaid` (pass this on UPDATE only) is the current, authoritative
+// totalPaid already stored on the patient — which is normally maintained by
+// ipdPayment.controller.js's recalcPatientTotals() from the real IPD_Payment
+// ledger (including any overpayment/credit). When it's provided, that value
+// — not deposit+cash+upi+card from this form submission — is what balance
+// and settlementStatus get computed from, and it's what gets saved back.
+//
+// Why this matters: deposit/cash/upi/card here represent the amount entered
+// at admission time. Without this guard, saving ANY edit through this form
+// (e.g. adding a daily charge, editing follow-up notes) would recompute
+// totalPaid from those four fields alone and silently overwrite the real
+// payment total — wiping out every payment recorded afterwards through the
+// Payments module, even though the actual IPD_Payment rows are untouched.
+// On CREATE there's no existing payment history yet, so deposit+cash+upi+card
+// is correctly the starting totalPaid.
+function buildPatientData(body, { existingTotalPaid } = {}) {
   const dailyCharges = Array.isArray(body.dailyCharges)
     ? body.dailyCharges
     : [];
@@ -52,10 +82,19 @@ function buildPatientData(body) {
   const cash = toNum(body.cash);
   const upi = toNum(body.upi);
   const card = toNum(body.card);
-  const totalPaid = deposit + cash + upi + card;
+  const enteredPaid = deposit + cash + upi + card;
 
   const totalStay = dailyCharges.reduce((s, c) => s + toNum(c.amount), 0);
-  const balance = Math.max(0, totalStay - totalPaid);
+
+  // On update, trust the Payments-module total; on create, seed it from
+  // whatever was entered as the initial admission payment.
+  const totalPaid = round2(
+    typeof existingTotalPaid === "number" ? existingTotalPaid : enteredPaid,
+  );
+  // Not clamped to 0 — a negative balance is an advance credit (see the
+  // Payments module), and clamping here would silently erase it every time
+  // a patient record is edited.
+  const balance = round2(totalStay - totalPaid);
 
   const dischargeStatus = body.dischargeStatus || "Admitted";
   const status = dischargeStatus === "Discharged" ? "Discharged" : "Admitted";
@@ -359,7 +398,7 @@ export async function updatePatient(req, res) {
     }
 
     const { flat, dailyCharges, medicines, additionalCharges } =
-      buildPatientData(req.body);
+      buildPatientData(req.body, { existingTotalPaid: existing.totalPaid });
 
     const stockError = await validateMedicinesStock(medicines);
     if (stockError) {
@@ -424,6 +463,82 @@ export async function updatePatient(req, res) {
       message: "Failed to update patient",
       error: err.message,
     });
+  }
+}
+
+// PATCH /api/ipd/patients/:id/discharge
+// Dedicated, narrow endpoint for transitioning a patient's discharge state
+// — used by the "Discharge Patient" / "Undo Discharge" quick actions.
+//
+// Deliberately does NOT go through buildPatientData()/updatePatient: it
+// only ever touches dischargeStatus, status, dischargeDate, and
+// dischargeTime. It never recomputes or touches totalStay, totalPaid,
+// balance, settlementStatus, daily charges, medicines, or additional
+// charges — so marking someone discharged can never accidentally disturb
+// their billing figures or clinical records.
+export async function dischargePatient(req, res) {
+  try {
+    const { id } = req.params;
+    const { dischargeStatus, dischargeDate, dischargeTime } = req.body;
+
+    if (!DISCHARGE_STATUSES.includes(dischargeStatus)) {
+      return res.status(400).json({
+        message: `dischargeStatus must be one of: ${DISCHARGE_STATUSES.join(", ")}`,
+      });
+    }
+
+    const patient = await prisma.iPD_Patient.findUnique({ where: { id } });
+    if (!patient) return res.status(404).json({ message: "Patient not found" });
+
+    const data = { dischargeStatus };
+
+    if (dischargeStatus === "Admitted") {
+      // "Undo Discharge" — fully reverts the patient back to an active
+      // admission and clears the discharge record.
+      data.status = "Admitted";
+      data.dischargeDate = null;
+      data.dischargeTime = null;
+    } else {
+      // "Ready For Discharge" still counts as an occupied bed; only a
+      // full "Discharged" flips the coarse `status` field used elsewhere
+      // in the app (bed-occupancy counts, the Admitted/Discharged filter).
+      data.status = dischargeStatus === "Discharged" ? "Discharged" : "Admitted";
+
+      const rawDate = dischargeDate || patient.dischargeDate || new Date();
+      const parsedDate = new Date(rawDate);
+      if (Number.isNaN(parsedDate.getTime())) {
+        return res.status(400).json({ message: "dischargeDate is not a valid date" });
+      }
+
+      const admissionMidnight = new Date(patient.admissionDate);
+      admissionMidnight.setHours(0, 0, 0, 0);
+      if (parsedDate < admissionMidnight) {
+        return res.status(400).json({
+          message: "Discharge date cannot be before the admission date",
+        });
+      }
+
+      data.dischargeDate = parsedDate;
+      // "Take system timing" — the client only asks for a date; the actual
+      // discharge TIME is always the server's current clock time at the
+      // moment this request is processed, unless the caller explicitly
+      // sent one (e.g. correcting a past record from the edit form).
+      data.dischargeTime =
+        dischargeTime || new Date().toTimeString().slice(0, 5);
+    }
+
+    const updated = await prisma.iPD_Patient.update({
+      where: { id },
+      data,
+      include: patientInclude,
+    });
+
+    res.json(mapPatientEnums(updated));
+  } catch (err) {
+    if (err.code === "P2025")
+      return res.status(404).json({ message: "Patient not found" });
+    console.error("dischargePatient error:", err);
+    res.status(500).json({ message: "Failed to update discharge status" });
   }
 }
 

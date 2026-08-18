@@ -105,27 +105,27 @@ export default function IPDPatientForm({ editPatient, onDone }) {
   const [form, setForm] = useState(
     editPatient
       ? {
-          ...editPatient,
-          admissionDate: toDateInput(editPatient.admissionDate),
-          dischargeDate: toDateInput(editPatient.dischargeDate),
-          card: editPatient.card || 0,
-          dailyCharges: (editPatient.dailyCharges || []).map((c) => ({
-            ...c,
-            date: toDateInput(c.date),
-          })),
-          medicines: editPatient.medicines || [],
-          additionalCharges: (editPatient.additionalCharges || []).map((c) => ({
-            ...c,
-            rate: c.rate ?? "",
-          })),
-          followUpDate: toDateInput(editPatient.followUpDate),
-          condition: editPatient.condition || "",
-          followUpDesc: editPatient.followUpDesc || "",
-          followUpStatus: editPatient.followUpStatus || "Pending",
-          reminderEnabled: editPatient.reminderEnabled || false,
-          reminderStatus: editPatient.reminderStatus || "Not Set",
-          reminderSentDate: toDateInput(editPatient.reminderSentDate),
-        }
+        ...editPatient,
+        admissionDate: toDateInput(editPatient.admissionDate),
+        dischargeDate: toDateInput(editPatient.dischargeDate),
+        card: editPatient.card || 0,
+        dailyCharges: (editPatient.dailyCharges || []).map((c) => ({
+          ...c,
+          date: toDateInput(c.date),
+        })),
+        medicines: editPatient.medicines || [],
+        additionalCharges: (editPatient.additionalCharges || []).map((c) => ({
+          ...c,
+          rate: c.rate ?? "",
+        })),
+        followUpDate: toDateInput(editPatient.followUpDate),
+        condition: editPatient.condition || "",
+        followUpDesc: editPatient.followUpDesc || "",
+        followUpStatus: editPatient.followUpStatus || "Pending",
+        reminderEnabled: editPatient.reminderEnabled || false,
+        reminderStatus: editPatient.reminderStatus || "Not Set",
+        reminderSentDate: toDateInput(editPatient.reminderSentDate),
+      }
       : defaultForm,
   );
   const [saving, setSaving] = useState(false);
@@ -426,13 +426,46 @@ export default function IPDPatientForm({ editPatient, onDone }) {
               onChange={set("expectedDays")}
               placeholder="Days"
             />
+            {editPatient && editPatient.dischargeStatus !== "Admitted" && (
+              <div>
+                <label className="block text-[11px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
+                  Discharge Status
+                </label>
+                <div
+                  className={`px-3 py-2 rounded-xl text-xs font-extrabold border ${editPatient.status === "Discharged"
+                      ? "bg-[#0f4a29]/10 text-[#0f4a29] dark:text-[#52b788] border-[#0f4a29]/20"
+                      : "bg-amber-50 text-amber-700 border-amber-200"
+                    }`}
+                >
+                  {editPatient.dischargeStatus}
+                </div>
+                <p className="text-[10px] text-slate-400 font-medium mt-1">
+                  Use the Discharge action on the patient list to change this.
+                </p>
+              </div>
+            )}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
             <FormInput
               label="Discharge Date"
               type="date"
               value={form.dischargeDate}
               onChange={set("dischargeDate")}
             />
+            <FormInput
+              label="Discharge Time"
+              type="time"
+              value={form.dischargeTime}
+              onChange={set("dischargeTime")}
+            />
           </div>
+          <p className="text-[10px] text-slate-400 font-medium mt-2">
+            Tip: to actually mark this patient as discharged (and move them
+            into Discharged Patients), use the{" "}
+            <strong>Discharge</strong> action from the patient list — it
+            keeps billing and clinical records untouched. The fields above
+            are for correcting a date/time after the fact.
+          </p>
         </SectionCard>
 
         <SectionCard title="Daily / Room Charges" icon={Clock}>
@@ -592,11 +625,10 @@ export default function IPDPatientForm({ editPatient, onDone }) {
                                   opt.v,
                                 )
                               }
-                              className={`px-2.5 py-1.5 rounded-xl text-[10px] font-extrabold border transition-all whitespace-nowrap ${
-                                c.chargeType === opt.v
+                              className={`px-2.5 py-1.5 rounded-xl text-[10px] font-extrabold border transition-all whitespace-nowrap ${c.chargeType === opt.v
                                   ? "bg-[#0f4a29] text-white border-[#0f4a29]"
                                   : "bg-white dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700"
-                              }`}
+                                }`}
                             >
                               {opt.label}
                             </button>

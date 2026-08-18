@@ -20,17 +20,9 @@ import {
 import IPDPatientForm from "./IPDPatientForm";
 import IPDPatientDetails from "./IPDPatientDetails";
 import InvoiceModal from "../../components/InvoiceModal";
-import DischargeModal from "./DischargeModal";
-import PageSizeSelect, { DEFAULT_PAGE_SIZE } from "./PageSizeSelect";
-import {
-  UserPlus,
-  Search,
-  Paperclip,
-  FileText,
-  Receipt,
-  DoorOpen,
-} from "lucide-react";
+import { UserPlus, Search, Paperclip, FileText, Receipt } from "lucide-react";
 
+const PER_PAGE = 7;
 const LATEST_DOCS_SHOWN = 3;
 
 const settlementColors = {
@@ -91,23 +83,17 @@ export default function IPDPatientList({ readOnly = false }) {
   const [error, setError] = useState("");
 
   const [search, setSearch] = useState("");
-  // Defaults to "Admitted" (active patients only) — discharged patients are
-  // hidden unless the user explicitly picks the "Discharged" or "All
-  // Status" tab. This keeps the day-to-day list focused on who's actually
-  // still on the ward.
-  const [statusFilter, setStatusFilter] = useState("Admitted");
+  const [statusFilter, setStatusFilter] = useState("");
   const [page, setPage] = useState(1);
-  const [perPage, setPerPage] = useState(DEFAULT_PAGE_SIZE);
   const [deleteId, setDeleteId] = useState(null);
   const [editing, setEditing] = useState(null);
   const [viewing, setViewing] = useState(null);
   const [invoicing, setInvoicing] = useState(null);
-  const [discharging, setDischarging] = useState(null);
   const navigate = useNavigate();
 
   const load = () => {
     setLoading(true);
-    fetchPatients({ search, status: statusFilter, page, limit: perPage })
+    fetchPatients({ search, status: statusFilter, page, limit: PER_PAGE })
       .then(({ data, totalPages, total }) => {
         setPatients(data);
         setTotalPages(totalPages);
@@ -121,7 +107,7 @@ export default function IPDPatientList({ readOnly = false }) {
   useEffect(() => {
     const t = setTimeout(load, 250);
     return () => clearTimeout(t);
-  }, [search, statusFilter, page, perPage]);
+  }, [search, statusFilter, page]);
 
   const handleDelete = (id) => {
     apiDeletePatient(id)
@@ -133,11 +119,6 @@ export default function IPDPatientList({ readOnly = false }) {
         setError(err.message);
         setDeleteId(null);
       });
-  };
-
-  const handleDischargeModalClosed = (didChange) => {
-    setDischarging(null);
-    if (didChange) load();
   };
 
   if (editing) {
@@ -158,10 +139,6 @@ export default function IPDPatientList({ readOnly = false }) {
         onBack={() => {
           setViewing(null);
           load();
-        }}
-        onEdit={(p) => {
-          setViewing(null);
-          setEditing(p);
         }}
         readOnly={readOnly}
       />
@@ -202,32 +179,23 @@ export default function IPDPatientList({ readOnly = false }) {
           }}
           placeholder="Search patient or IPD no..."
         />
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex gap-1.5 p-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-full shadow-2xs">
-            {["", "Admitted", "Discharged"].map((s) => (
-              <button
-                key={s}
-                onClick={() => {
-                  setStatusFilter(s);
-                  setPage(1);
-                }}
-                className={`px-4 py-1.5 rounded-full text-xs font-extrabold transition-all ${
-                  statusFilter === s
-                    ? "bg-[#0f4a29] text-white shadow-xs"
-                    : "text-slate-500 hover:text-slate-900"
-                }`}
-              >
-                {s || "All Status"}
-              </button>
-            ))}
-          </div>
-          <PageSizeSelect
-            value={perPage}
-            onChange={(n) => {
-              setPerPage(n);
-              setPage(1);
-            }}
-          />
+        <div className="flex gap-1.5 p-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-full shadow-2xs">
+          {["", "Admitted", "Discharged"].map((s) => (
+            <button
+              key={s}
+              onClick={() => {
+                setStatusFilter(s);
+                setPage(1);
+              }}
+              className={`px-4 py-1.5 rounded-full text-xs font-extrabold transition-all ${
+                statusFilter === s
+                  ? "bg-[#0f4a29] text-white shadow-xs"
+                  : "text-slate-500 hover:text-slate-900"
+              }`}
+            >
+              {s || "All Status"}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -328,21 +296,6 @@ export default function IPDPatientList({ readOnly = false }) {
                       >
                         <Receipt className="w-4 h-4" />
                       </button>
-                      <button
-                        onClick={() => setDischarging(p)}
-                        title={
-                          p.status === "Discharged"
-                            ? "Undo Discharge"
-                            : "Discharge Patient"
-                        }
-                        className={`p-1.5 rounded-lg transition-colors ${
-                          p.status === "Discharged"
-                            ? "text-slate-400 hover:text-[#0f4a29] hover:bg-[#0f4a29]/10"
-                            : "text-slate-400 hover:text-amber-600 hover:bg-amber-50"
-                        }`}
-                      >
-                        <DoorOpen className="w-4 h-4" />
-                      </button>
                     </div>
                   </Td>
                 )}
@@ -367,13 +320,6 @@ export default function IPDPatientList({ readOnly = false }) {
           type="IPD"
           patient={invoicing}
           onClose={() => setInvoicing(null)}
-        />
-      )}
-
-      {discharging && (
-        <DischargeModal
-          patient={discharging}
-          onClose={handleDischargeModalClosed}
         />
       )}
     </div>

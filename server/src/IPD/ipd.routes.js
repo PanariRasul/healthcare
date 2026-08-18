@@ -7,7 +7,6 @@ import {
   getStats,
   createPatient,
   updatePatient,
-  dischargePatient,
   deletePatient,
   uploadDocument,
   deleteDocument,
@@ -27,11 +26,6 @@ router.get("/:id", getPatient);
 router.post("/", createPatient);
 router.put("/:id", updatePatient);
 router.delete("/:id", deletePatient);
-
-// Narrow "quick action" endpoint for the Discharge tab — see
-// dischargePatient() in the controller for why this is kept separate from
-// the full PUT /:id update.
-router.patch("/:id/discharge", dischargePatient);
 
 router.post("/:id/documents", uploadIpdDocument.single("file"), uploadDocument);
 router.delete("/:id/documents/:docId", deleteDocument);

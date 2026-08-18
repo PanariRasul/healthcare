@@ -2,8 +2,7 @@
 import { useState, useRef } from "react";
 import { SectionCard, StatusBadge, PageHeader } from "../../components/UI";
 import InvoiceModal from "../../components/InvoiceModal";
-import DischargeModal from "./DischargeModal";
-import { uploadDocument, deleteDocument, fetchPatient } from "./api/ipd.api";
+import { uploadDocument, deleteDocument } from "./api/ipd.api";
 import {
   ArrowLeft,
   User,
@@ -20,7 +19,6 @@ import {
   Bell,
   Utensils,
   FileText,
-  DoorOpen,
 } from "lucide-react";
 
 const docTypes = ["Prescription", "Lab Report", "Scan Report", "Hospital Bill"];
@@ -62,45 +60,6 @@ function StatTile({ label, val }) {
   );
 }
 
-// "Swipe" style toggle switch for the Discharge action. Off = Admitted, On
-// = Discharged. Clicking it doesn't discharge immediately — it opens the
-// confirmation modal (which asks for the discharge date), so a single
-// accidental tap can't discharge someone by mistake.
-function DischargeToggle({ discharged, onClick }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      role="switch"
-      aria-checked={discharged}
-      title={discharged ? "Undo Discharge" : "Discharge Patient"}
-      className="flex items-center gap-2.5 px-3 py-2 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-extrabold"
-    >
-      <DoorOpen
-        className={`w-4 h-4 ${
-          discharged
-            ? "text-[#0f4a29] dark:text-[#52b788]"
-            : "text-slate-400"
-        }`}
-      />
-      <span className="text-slate-700 dark:text-slate-300">
-        {discharged ? "Discharged" : "Discharge"}
-      </span>
-      <span
-        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-          discharged ? "bg-[#0f4a29]" : "bg-slate-300 dark:bg-slate-700"
-        }`}
-      >
-        <span
-          className={`absolute left-0.5 inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-            discharged ? "translate-x-4" : "translate-x-0"
-          }`}
-        />
-      </span>
-    </button>
-  );
-}
-
 export default function IPDPatientDetails({
   patient: initP,
   onBack,
@@ -113,8 +72,6 @@ export default function IPDPatientDetails({
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [invoicing, setInvoicing] = useState(false);
-  const [discharging, setDischarging] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
 
   const handleFile = async (e) => {
     const file = e.target.files[0];
@@ -147,22 +104,6 @@ export default function IPDPatientDetails({
     }
   };
 
-  const handleDischargeModalClosed = async (didChange) => {
-    setDischarging(false);
-    if (!didChange) return;
-    // Refresh this page's copy of the patient in place — no navigation —
-    // so the Discharged badge, dates, and toggle update immediately.
-    setRefreshing(true);
-    try {
-      const fresh = await fetchPatient(p.id);
-      setP(fresh);
-    } catch (err) {
-      setError(err.message || "Discharge saved, but the page failed to refresh.");
-    } finally {
-      setRefreshing(false);
-    }
-  };
-
   const isImage = (ft) => ft && ft.startsWith("image");
 
   const dailyCharges = p.dailyCharges || [];
@@ -180,10 +121,6 @@ export default function IPDPatientDetails({
           <div className="flex items-center gap-2">
             {!readOnly && (
               <>
-                <DischargeToggle
-                  discharged={p.status === "Discharged"}
-                  onClick={() => setDischarging(true)}
-                />
                 <button
                   onClick={() => onEdit?.(p)}
                   className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 text-xs font-extrabold"
@@ -208,12 +145,6 @@ export default function IPDPatientDetails({
         }
       />
 
-      {refreshing && (
-        <div className="-mt-4 text-[11px] font-bold text-slate-400">
-          Updating discharge status...
-        </div>
-      )}
-
       {p.fromOPD && (
         <div className="-mt-4">
           <span className="inline-flex items-center gap-1.5 text-[11px] font-extrabold uppercase px-3 py-1 rounded-full bg-violet-100 text-violet-700 border border-violet-200">
@@ -229,10 +160,6 @@ export default function IPDPatientDetails({
           patient={p}
           onClose={() => setInvoicing(false)}
         />
-      )}
-
-      {discharging && (
-        <DischargeModal patient={p} onClose={handleDischargeModalClosed} />
       )}
 
       {error && (

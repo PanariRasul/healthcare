@@ -23,7 +23,6 @@ import IPDPatientList from "./pages/ipd/IPDPatientList";
 import IPDPatientForm from "./pages/ipd/IPDPatientForm";
 import IPDPaymentList from "./pages/ipd/payments/IPDPaymentList";
 import IPDFollowups from "./pages/ipd/IPDFollowUps";
-import IPDDischargedList from "./pages/ipd/IPDDischargeList";
 
 import DoctorOPDLayout from "./pages/doctor/DoctorOPDLayout";
 import { DoctorOPDDashboard } from "./pages/doctor/DoctorOPDDashboard";
@@ -137,7 +136,6 @@ function AppRoutes() {
           }
         />
         <Route path="/ipd/payments" element={<IPDPaymentList />} />
-        <Route path="/ipd/discharged" element={<IPDDischargedList />} />
         <Route path="/ipd/followups" element={<IPDFollowups />} />
         <Route path="/ipd/pharmacy-billing" element={<PharmacyBilling />} />
       </Route>

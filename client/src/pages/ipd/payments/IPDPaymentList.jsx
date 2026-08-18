@@ -12,26 +12,32 @@ import { fetchPaymentSummary } from "./api/ipdPayment.api";
 import IPDPaymentModal from "./IPDPaymentModal";
 import { IndianRupee, Wallet } from "lucide-react";
 
-const STATUS_OPTIONS = ["", "Pending", "Partially Paid", "Fully Paid"];
+const STATUS_OPTIONS = ["", "Pending", "Partially Paid", "Fully Paid", "Overpaid"];
 
 const STATUS_STYLES = {
   "Fully Paid":
     "bg-[#0f4a29]/10 text-[#0f4a29] dark:text-[#52b788] border-[#0f4a29]/20",
   "Partially Paid": "bg-amber-50 text-amber-700 border-amber-200",
   Pending: "bg-rose-50 text-rose-700 border-rose-200",
+  Overpaid: "bg-sky-50 text-sky-700 border-sky-200",
 };
 
 const fmtDate = (d) =>
   d
     ? new Date(d).toLocaleDateString("en-IN", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      })
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    })
     : "—";
 const fmtMoney = (n) => `₹${(n || 0).toLocaleString("en-IN")}`;
 
-const STATUS_ORDER = { Pending: 0, "Partially Paid": 1, "Fully Paid": 2 };
+const STATUS_ORDER = {
+  Pending: 0,
+  "Partially Paid": 1,
+  "Fully Paid": 2,
+  Overpaid: 3,
+};
 const sortByStatus = (list) =>
   [...list].sort((a, b) => {
     const oa = STATUS_ORDER[a.settlementStatus] ?? 99;
@@ -102,11 +108,10 @@ export default function IPDPaymentList() {
               <button
                 key={s}
                 onClick={() => setStatus(s)}
-                className={`px-4 py-1.5 rounded-full text-xs font-extrabold transition-all whitespace-nowrap ${
-                  active
+                className={`px-4 py-1.5 rounded-full text-xs font-extrabold transition-all whitespace-nowrap ${active
                     ? "bg-[#0f4a29] text-white shadow-xs"
                     : "text-slate-500 hover:text-slate-900 dark:text-slate-400"
-                }`}
+                  }`}
               >
                 {s || "All Statuses"}
               </button>
@@ -175,14 +180,20 @@ export default function IPDPaymentList() {
                 <Td className="text-right text-[#0f4a29] dark:text-[#52b788] font-extrabold">
                   {fmtMoney(p.totalPaid)}
                 </Td>
-                <Td className="text-right font-extrabold text-rose-500">
-                  {p.balance > 0 ? fmtMoney(p.balance) : "Cleared"}
+                <Td
+                  className={`text-right font-extrabold ${p.balance < 0 ? "text-[#0f4a29] dark:text-[#52b788]" : "text-rose-500"
+                    }`}
+                >
+                  {p.balance > 0
+                    ? fmtMoney(p.balance)
+                    : p.balance < 0
+                      ? `+${fmtMoney(Math.abs(p.balance))} credit`
+                      : "Cleared"}
                 </Td>
                 <Td>
                   <span
-                    className={`inline-block text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border ${
-                      STATUS_STYLES[p.settlementStatus] || ""
-                    }`}
+                    className={`inline-block text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border ${STATUS_STYLES[p.settlementStatus] || ""
+                      }`}
                   >
                     {p.settlementStatus}
                   </span>
@@ -201,7 +212,7 @@ export default function IPDPaymentList() {
                       className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-300 hover:text-[#0f4a29] text-xs font-bold px-3 py-1 rounded-full border border-slate-200 dark:border-slate-800 transition-colors"
                     >
                       <Wallet className="w-3.5 h-3.5 text-[#0f4a29] dark:text-[#52b788]" />{" "}
-                      History
+                      {p.balance < 0 ? "View / Add" : "History"}
                     </button>
                   )}
                 </Td>

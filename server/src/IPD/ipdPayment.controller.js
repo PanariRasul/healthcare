@@ -3,15 +3,57 @@ import prisma from "../lib/prisma.js";
 
 const METHOD_VALUES = ["CASH", "UPI", "CARD", "BANK_TRANSFER", "OTHER"];
 
+// Money is stored as Float, so plain subtraction can leave tiny binary
+// rounding artifacts (e.g. 21499.999999999996). Round everything we persist
+// or compare to 2 decimal places so the UI never shows "junk" paise.
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+// Guards against a fat-fingered payment amount (e.g. an extra zero) slipping
+// through as a valid, unbounded number. Generous enough to never block a
+// real hospital bill, but catches obvious data-entry mistakes.
+const MAX_PAYMENT_AMOUNT = 1_00_00_000; // ₹1 crore
+
+// Optional free-text fields (reference number, notes) — trim whitespace and
+// cap length so the API can't be used to stuff arbitrarily large blobs into
+// the database.
+const sanitizeText = (value, maxLen = 300) => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, maxLen) : null;
+};
+
+// Parses an optional date input; returns `fallback` for missing/blank input
+// and throws a 400 for a value that was supplied but isn't a valid date,
+// instead of silently persisting "Invalid Date".
+const parseOptionalDate = (input, fallback) => {
+  if (input === undefined || input === null || input === "") return fallback;
+  const date = new Date(input);
+  if (Number.isNaN(date.getTime())) {
+    throw Object.assign(new Error("paymentDate is not a valid date"), { status: 400 });
+  }
+  return date;
+};
+
 function calcSettlement(totalStay, totalPaid) {
-  if (totalPaid <= 0) return "Pending";
-  if (totalPaid >= totalStay) return "Fully Paid";
+  const stay = round2(totalStay);
+  const paid = round2(totalPaid);
+  if (paid <= 0) return "Pending";
+  if (paid > stay) return "Overpaid"; // patient has a credit balance
+  if (paid === stay) return "Fully Paid";
   return "Partially Paid";
 }
 
 // Recomputes and persists a patient's totalPaid / balance / settlementStatus
 // from the sum of its IPD_Payment rows. Call inside a transaction after any
 // payment create/update/delete so the patient record always stays in sync.
+//
+// NOTE: overpayments are allowed (see addPayment/updatePayment — the old
+// "amount can't exceed balance" guard was removed). That means `balance`
+// can go negative here, representing a credit/advance the patient has on
+// file. We intentionally do NOT clamp it to 0 anymore: a negative balance
+// is what lets that credit get carried forward and auto-adjusted against
+// future charges (e.g. additional charges / next billing cycle raising
+// totalStay). Clamping to 0 would silently erase that credit.
 async function recalcPatientTotals(tx, patientId) {
   const patient = await tx.iPD_Patient.findUnique({ where: { id: patientId } });
   if (!patient) throw Object.assign(new Error("Patient not found"), { status: 404 });
@@ -20,8 +62,8 @@ async function recalcPatientTotals(tx, patientId) {
     where: { patientId },
     _sum: { amount: true },
   });
-  const totalPaid = agg._sum.amount || 0;
-  const balance = Math.max(0, patient.totalStay - totalPaid);
+  const totalPaid = round2(agg._sum.amount || 0);
+  const balance = round2(patient.totalStay - totalPaid); // can be negative = credit/advance
   const settlementStatus = calcSettlement(patient.totalStay, totalPaid);
 
   return tx.iPD_Patient.update({
@@ -39,11 +81,11 @@ export async function listPaymentSummary(req, res) {
       AND: [
         search
           ? {
-              OR: [
-                { name: { contains: search, mode: "insensitive" } },
-                { serialNumber: { contains: search, mode: "insensitive" } },
-              ],
-            }
+            OR: [
+              { name: { contains: search, mode: "insensitive" } },
+              { serialNumber: { contains: search, mode: "insensitive" } },
+            ],
+          }
           : {},
         status ? { settlementStatus: status } : {},
       ],
@@ -126,9 +168,14 @@ export async function addPayment(req, res) {
 
     if (!patientId) return res.status(400).json({ message: "patientId is required" });
 
-    const amt = parseFloat(amount);
+    const amt = round2(parseFloat(amount));
     if (!Number.isFinite(amt) || amt <= 0) {
       return res.status(400).json({ message: "Payment amount must be a positive number" });
+    }
+    if (amt > MAX_PAYMENT_AMOUNT) {
+      return res.status(400).json({
+        message: `Payment amount looks too large (max ₹${MAX_PAYMENT_AMOUNT.toLocaleString("en-IN")} per transaction). Double-check the amount.`,
+      });
     }
     if (!METHOD_VALUES.includes(method)) {
       return res.status(400).json({ message: `method must be one of: ${METHOD_VALUES.join(", ")}` });
@@ -138,26 +185,25 @@ export async function addPayment(req, res) {
       const patient = await tx.iPD_Patient.findUnique({ where: { id: patientId } });
       if (!patient) throw Object.assign(new Error("Patient not found"), { status: 404 });
 
-      if (amt > patient.balance) {
-        throw Object.assign(
-          new Error(`Payment amount (₹${amt}) exceeds remaining balance (₹${patient.balance})`),
-          { status: 400 }
-        );
-      }
+      // Overpayment is allowed on purpose — reception may collect more than
+      // the current balance (e.g. patient paying ahead). The excess shows
+      // up as a negative balance (credit) and is auto-adjusted against
+      // future charges/billing instead of being rejected here.
+      const overpaidBy = amt > patient.balance ? round2(amt - patient.balance) : 0;
 
       const payment = await tx.iPD_Payment.create({
         data: {
           patientId,
           amount: amt,
           method,
-          referenceNumber: referenceNumber || null,
-          notes: notes || null,
-          paymentDate: paymentDate ? new Date(paymentDate) : new Date(),
+          referenceNumber: sanitizeText(referenceNumber, 100),
+          notes: sanitizeText(notes, 500),
+          paymentDate: parseOptionalDate(paymentDate, new Date()),
         },
       });
 
       const updatedPatient = await recalcPatientTotals(tx, patientId);
-      return { payment, patient: updatedPatient };
+      return { payment, patient: updatedPatient, overpaidBy };
     });
 
     res.status(201).json(result);
@@ -183,18 +229,18 @@ export async function updatePayment(req, res) {
 
       let amt = existing.amount;
       if (amount !== undefined) {
-        amt = parseFloat(amount);
+        amt = round2(parseFloat(amount));
         if (!Number.isFinite(amt) || amt <= 0) {
           throw Object.assign(new Error("Payment amount must be a positive number"), { status: 400 });
         }
-        // Balance if this payment didn't exist yet, since we're replacing its amount
-        const balanceExcludingThis = patient.balance + existing.amount;
-        if (amt > balanceExcludingThis) {
+        if (amt > MAX_PAYMENT_AMOUNT) {
           throw Object.assign(
-            new Error(`Payment amount (₹${amt}) exceeds remaining balance (₹${balanceExcludingThis})`),
+            new Error(`Payment amount looks too large (max ₹${MAX_PAYMENT_AMOUNT.toLocaleString("en-IN")} per transaction). Double-check the amount.`),
             { status: 400 }
           );
         }
+        // Overpayment is allowed here too, same as addPayment — no cap
+        // against the remaining balance.
       }
 
       if (method !== undefined && !METHOD_VALUES.includes(method)) {
@@ -206,9 +252,10 @@ export async function updatePayment(req, res) {
         data: {
           amount: amt,
           method: method !== undefined ? method : existing.method,
-          referenceNumber: referenceNumber !== undefined ? referenceNumber || null : existing.referenceNumber,
-          notes: notes !== undefined ? notes || null : existing.notes,
-          paymentDate: paymentDate ? new Date(paymentDate) : existing.paymentDate,
+          referenceNumber:
+            referenceNumber !== undefined ? sanitizeText(referenceNumber, 100) : existing.referenceNumber,
+          notes: notes !== undefined ? sanitizeText(notes, 500) : existing.notes,
+          paymentDate: parseOptionalDate(paymentDate, existing.paymentDate),
         },
       });
 

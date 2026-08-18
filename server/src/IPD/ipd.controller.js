@@ -177,33 +177,102 @@ function buildPatientData(body, { existingTotalPaid } = {}) {
   };
 }
 
-// Defense-in-depth: re-checks prescribed quantities against current DB stock.
-// The form already blocks over-prescribing client-side, but stock can change
-// between page load and save (e.g. another user reducing it), so this stops
-// a stale form from pushing a patient's medicine count above what's in stock.
-async function validateMedicinesStock(medicines) {
-  const withMedicineId = medicines.filter((m) => m.medicineId);
-  if (!withMedicineId.length) return null;
+// Thrown for any pharmacy-stock problem hit while saving an IPD patient's
+// medicines (missing medicine, not enough stock left). Kept as its own class
+// so createPatient/updatePatient can tell "bad request" (400) apart from a
+// genuine server error (500) after it bubbles up out of a $transaction.
+class StockError extends Error {}
 
-  const ids = [...new Set(withMedicineId.map((m) => m.medicineId))];
-  const rows = await prisma.medicine.findMany({ where: { id: { in: ids } } });
-  const byId = new Map(rows.map((r) => [r.id, r]));
+// Actually applies the pharmacy-stock impact of an IPD patient's medicines —
+// this is the fix for medicines not being deducted from stock at all.
+//
+// Works on the NET DIFFERENCE between what the patient's medicines list used
+// to be (`previousMedicines`, straight from the DB) and what it's being
+// saved as now (`newMedicines`), grouped by medicineId:
+//   - On CREATE, previousMedicines is [], so every medicine's full quantity
+//     is deducted.
+//   - On UPDATE, only the delta moves: increasing a quantity (or adding a
+//     new medicine) deducts the extra amount; decreasing a quantity (or
+//     removing a medicine) returns the difference to stock. Saving the same
+//     medicines/quantities again is a no-op — nothing is double-deducted.
+// Every actual stock change is logged to StockHistory, same as OPD
+// prescriptions and the Pharmacy "Add/Reduce Stock" action, so the trail is
+// consistent across the whole app.
+//
+// Must be called with a Prisma transaction client (`tx`) so the stock
+// check/update and the patient/medicine rows commit or roll back together.
+async function applyIpdMedicineStockChanges(
+  tx,
+  { previousMedicines = [], newMedicines = [], contextLabel },
+) {
+  const deltas = new Map(); // medicineId -> net tablets needed (positive = deduct, negative = restock)
 
-  for (const m of withMedicineId) {
-    const row = byId.get(m.medicineId);
-    if (!row)
-      return `Selected medicine "${m.name}" no longer exists in the pharmacy catalog.`;
-    if (m.quantity > row.quantity) {
-      return `Only ${row.quantity} unit(s) of "${row.drugName}" are in stock (requested ${m.quantity}).`;
-    }
+  for (const m of previousMedicines) {
+    if (!m.medicineId) continue;
+    deltas.set(
+      m.medicineId,
+      (deltas.get(m.medicineId) || 0) - (toNum(m.quantity) || 0),
+    );
   }
-  return null;
+  for (const m of newMedicines) {
+    if (!m.medicineId) continue;
+    deltas.set(
+      m.medicineId,
+      (deltas.get(m.medicineId) || 0) + (toNum(m.quantity) || 0),
+    );
+  }
+
+  for (const [medicineId, delta] of deltas.entries()) {
+    if (!delta) continue; // unchanged — nothing to do
+
+    const med = await tx.medicine.findUnique({ where: { id: medicineId } });
+    if (!med) {
+      throw new StockError(
+        "A selected medicine no longer exists in the pharmacy catalog.",
+      );
+    }
+    if (delta > 0 && med.quantity < delta) {
+      throw new StockError(
+        `Only ${med.quantity} unit(s) of "${med.drugName}" are in stock (this change needs ${delta} more).`,
+      );
+    }
+
+    await tx.medicine.update({
+      where: { id: medicineId },
+      data: { quantity: med.quantity - delta },
+    });
+
+    await tx.stockHistory.create({
+      data: {
+        medicineId,
+        date: new Date(),
+        action: delta > 0 ? "REDUCE" : "ADD",
+        // Positive quantity = added to stock, negative = removed —
+        // consistent with OPD's createPrescription and the Pharmacy
+        // Add/Reduce Stock action.
+        quantity: -delta,
+        reason:
+          delta > 0
+            ? `Dispensed for ${contextLabel}`
+            : `Stock restored — medicine list updated for ${contextLabel}`,
+      },
+    });
+  }
 }
 
 const patientInclude = {
   dailyCharges: { orderBy: { date: "asc" } },
 
-  medicines: true,
+  // `medicine: { select: { sellingPrice: true } }` is included so the
+  // OPD/IPD "Generate Invoice" screen can prefill each medicine's price —
+  // previously this returned bare IPD_Medicine rows with no price at all,
+  // which is why invoice line items always came in at ₹0 and had to be
+  // typed in by hand.
+  medicines: {
+    include: {
+      medicine: { select: { sellingPrice: true } },
+    },
+  },
 
   additionalCharges: {
     orderBy: {
@@ -352,33 +421,49 @@ export async function createPatient(req, res) {
     const { flat, dailyCharges, medicines, additionalCharges } =
       buildPatientData(req.body);
 
-    const stockError = await validateMedicinesStock(medicines);
-    if (stockError) return res.status(400).json({ message: stockError });
-
     const serialNumber = await generateSerialNumber();
 
-    const patient = await prisma.iPD_Patient.create({
-      data: {
-        ...flat,
-        serialNumber,
+    const patient = await prisma.$transaction(
+      async (tx) => {
+        const created = await tx.iPD_Patient.create({
+          data: {
+            ...flat,
+            serialNumber,
 
-        dailyCharges: {
-          create: dailyCharges,
-        },
+            dailyCharges: {
+              create: dailyCharges,
+            },
 
-        medicines: {
-          create: medicines,
-        },
+            medicines: {
+              create: medicines,
+            },
 
-        additionalCharges: {
-          create: additionalCharges,
-        },
+            additionalCharges: {
+              create: additionalCharges,
+            },
+          },
+          include: patientInclude,
+        });
+
+        // Actually deduct the prescribed medicines from pharmacy stock —
+        // previously this only validated availability and never touched
+        // `medicine.quantity`, so stock was never reduced on admission.
+        await applyIpdMedicineStockChanges(tx, {
+          previousMedicines: [],
+          newMedicines: medicines,
+          contextLabel: `IPD patient ${created.name} (${created.serialNumber})`,
+        });
+
+        return created;
       },
-      include: patientInclude,
-    });
+      { timeout: 15000, maxWait: 10000 },
+    );
 
     res.status(201).json(mapPatientEnums(patient));
   } catch (err) {
+    if (err instanceof StockError) {
+      return res.status(400).json({ message: err.message });
+    }
     console.error("createPatient error:", err);
     res.status(500).json({ message: "Failed to create patient" });
   }
@@ -391,6 +476,7 @@ export async function updatePatient(req, res) {
 
     const existing = await prisma.iPD_Patient.findUnique({
       where: { id },
+      include: { medicines: true },
     });
 
     if (!existing) {
@@ -399,11 +485,6 @@ export async function updatePatient(req, res) {
 
     const { flat, dailyCharges, medicines, additionalCharges } =
       buildPatientData(req.body, { existingTotalPaid: existing.totalPaid });
-
-    const stockError = await validateMedicinesStock(medicines);
-    if (stockError) {
-      return res.status(400).json({ message: stockError });
-    }
 
     // Kept to a minimal number of round-trips (3 deletes + 1 update + 1
     // createMany) so the interactive transaction stays well inside its
@@ -416,6 +497,18 @@ export async function updatePatient(req, res) {
     // Postgres) and is the thing to investigate next.
     await prisma.$transaction(
       async (tx) => {
+        // Apply the net stock change BEFORE the old medicine rows are wiped
+        // out below — `existing.medicines` (fetched above, pre-transaction)
+        // is the "before" picture, `medicines` is the "after" picture. Only
+        // the difference between the two moves stock, so unrelated edits
+        // (e.g. changing a daily charge) never re-deduct medicines that were
+        // already dispensed.
+        await applyIpdMedicineStockChanges(tx, {
+          previousMedicines: existing.medicines,
+          newMedicines: medicines,
+          contextLabel: `IPD patient ${existing.name} (${existing.serialNumber})`,
+        });
+
         await tx.iPD_DailyCharge.deleteMany({ where: { patientId: id } });
         await tx.iPD_Medicine.deleteMany({ where: { patientId: id } });
         await tx.iPD_AdditionalCharge.deleteMany({ where: { patientId: id } });
@@ -458,6 +551,9 @@ export async function updatePatient(req, res) {
 
     res.json(mapPatientEnums(fullPatient));
   } catch (err) {
+    if (err instanceof StockError) {
+      return res.status(400).json({ message: err.message });
+    }
     console.error("updatePatient error:", err);
     res.status(500).json({
       message: "Failed to update patient",

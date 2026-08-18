@@ -316,7 +316,7 @@ model Invoice {
   patientId     String
   patientName   String
 
-  lineItems     Json // [{ description, qty, rate, amount }]
+  lineItems     Json // [{ description, qty, rate, amount, medicineId?, returnedQty? }]
   subtotal      Float
   discount      Float   @default(0)
   gstPercent    Float   @default(0)
@@ -332,6 +332,17 @@ model Invoice {
   // even if the user account is later deleted/deactivated.
   createdById   String?
   createdByName String?
+
+  // --- Pharmacy return tracking (patientType === "PHARMACY" only) ---
+  // NONE = nothing returned yet, PARTIAL = some line items/quantities
+  // returned, FULL = every unit on every dispensable line item returned.
+  // Per-line returned quantities live inside lineItems (returnedQty), this
+  // is just a fast-to-read rollup for list screens.
+  returnStatus  String    @default("NONE")
+  returnedAt    DateTime?
+  returnNotes   String?
+  returnedById  String?
+  returnedByName String?
 
   createdAt DateTime @default(now())
 

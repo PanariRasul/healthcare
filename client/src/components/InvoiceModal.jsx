@@ -302,7 +302,11 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
           id: nextRowId(),
           description: `${m.name}${m.dosage ? ` (${m.dosage})` : ""}`,
           qty: m.quantity || 1,
-          rate: 0, // price not tracked on IPD medicine records — fill in manually
+          // Per-strip selling price from the linked pharmacy catalog entry
+          // (medicineId -> medicine.sellingPrice), same price Pharmacy
+          // Billing uses. Falls back to 0 (editable) for medicines that
+          // were entered as free text with no catalog link.
+          rate: m.medicine?.sellingPrice || 0,
         });
       });
       setPaid(data.totalPaid || 0);
@@ -324,7 +328,10 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
           id: nextRowId(),
           description: `${pm.drugName}${pm.dosageInstructions ? ` (${pm.dosageInstructions})` : ""}`,
           qty: pm.quantity || 1,
-          rate: 0, // medicine price not exposed to OPD prescriptions — fill in manually
+          // Per-strip selling price from the pharmacy catalog, same price
+          // Pharmacy Billing uses. Falls back to 0 (editable) if the
+          // medicine record was since removed from the catalog.
+          rate: pm.sellingPrice || 0,
         });
       });
       setPaid(data.total || 0);
@@ -492,12 +499,25 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs invoice-modal-backdrop">
       <style>{`
         @media print {
+          /* @page margin: 0 removes the browser's own header/footer strip
+             (page title/URL up top, date-time-stamp + page number at the
+             bottom) — there's no margin box left for the browser to draw
+             them into. We add our own whitespace back via padding on
+             .invoice-print-area below, so the printed page still looks
+             properly framed. */
+          @page { margin: 0; size: auto; }
+          html, body { margin: 0 !important; padding: 0 !important; height: auto !important; background: #fff !important; }
           body * { visibility: hidden; }
           .invoice-print-area, .invoice-print-area * { visibility: visible; }
           .invoice-print-area {
-            position: fixed; inset: 0; width: 100%; margin: 0; padding: 24px;
+            position: absolute; top: 0; left: 0; width: 100%; margin: 0;
+            padding: 10mm 12mm 8mm;
             box-shadow: none !important; border: none !important; max-height: none !important;
-            overflow: visible !important;
+            overflow: visible !important; border-radius: 0 !important;
+            /* Natural height (no forced 100vh) — a short invoice only
+               takes up as much of the page as its content needs, instead
+               of always stretching to fill/reserve a full page. */
+            height: auto !important;
           }
           .no-print { display: none !important; }
           .invoice-print-area input, .invoice-print-area select, .invoice-print-area textarea {
@@ -505,6 +525,11 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
             padding: 0 !important; box-shadow: none !important; -webkit-appearance: none;
             appearance: none;
           }
+          /* Compact, uniform 12px print type across the whole invoice. */
+          .invoice-print-area, .invoice-print-area * { font-size: 12px !important; line-height: 1.4 !important; }
+          .invoice-print-area .invoice-clinic-name { font-size: 12px !important; }
+          .invoice-print-area .invoice-clinic-tagline { font-size: 9px !important; }
+          .invoice-print-area .invoice-badge { font-size: 9px !important; }
         }
       `}</style>
 
@@ -813,20 +838,27 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
             )}
 
             <div className="p-6 sm:p-8 space-y-6 text-slate-900 dark:text-white">
-              {/* Letterhead */}
-              <div className="text-center border-b-2 border-slate-800 dark:border-slate-200 pb-4">
+              {/* Letterhead — accent bar + compact clinic name (12px) with an
+                  "INVOICE" tag on the side for a cleaner, less clinical look. */}
+              <div className="relative text-center pb-4 border-b-2 border-[#0f4a29] dark:border-[#52b788]">
+                <span className="invoice-badge no-print absolute right-0 top-0 text-[9px] font-extrabold tracking-[0.2em] uppercase text-white bg-[#0f4a29] px-2.5 py-1 rounded-full">
+                  Invoice
+                </span>
                 {CLINIC.logoUrl && (
                   <img
                     src={CLINIC.logoUrl}
                     alt="Clinic logo"
-                    className="h-16 mx-auto mb-2 object-contain"
+                    className="h-12 mx-auto mb-1.5 object-contain"
                   />
                 )}
-                <h1 className="text-xl font-extrabold tracking-wide">
+                <h1
+                  className="invoice-clinic-name font-extrabold tracking-wide"
+                  style={{ fontSize: "12px" }}
+                >
                   {CLINIC.name}
                 </h1>
                 {CLINIC.tagline && (
-                  <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                  <p className="invoice-clinic-tagline text-[10px] font-semibold text-slate-500 dark:text-slate-400 mt-0.5">
                     {CLINIC.tagline}
                   </p>
                 )}
@@ -990,7 +1022,7 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
 
               {/* Totals */}
               <div className="flex justify-end">
-                <div className="w-full sm:w-72 space-y-1.5 text-xs font-medium">
+                <div className="w-full sm:w-72 space-y-1.5 text-xs font-medium bg-slate-50/70 dark:bg-slate-800/30 border border-slate-100 dark:border-slate-800 rounded-2xl p-4">
                   <div className="flex justify-between">
                     <span className="text-slate-400">Subtotal</span>
                     <span className="font-extrabold">{fmtINR(subtotal)}</span>
@@ -1017,9 +1049,9 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                     <span className="text-slate-400">GST Amount</span>
                     <span className="font-extrabold">{fmtINR(gstVal)}</span>
                   </div>
-                  <div className="flex justify-between border-t-2 border-slate-800 dark:border-slate-200 pt-1.5 mt-1.5">
+                  <div className="flex justify-between border-t-2 border-[#0f4a29] dark:border-[#52b788] pt-1.5 mt-1.5">
                     <span className="font-extrabold">Grand Total</span>
-                    <span className="font-extrabold">{fmtINR(grandTotal)}</span>
+                    <span className="font-extrabold text-[#0f4a29] dark:text-[#52b788]">{fmtINR(grandTotal)}</span>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-slate-400">Paid</span>

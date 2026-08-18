@@ -108,6 +108,11 @@ export function fromDbPatient(p) {
       id: pm.id,
       medicineId: pm.medicineId,
       drugName: pm.medicine?.drugName || "Unknown",
+      // Exposed so the "Generate Invoice" screen can prefill each
+      // medicine's price — previously this was dropped here even though
+      // the query already joins `medicine`, so invoices always priced
+      // prescribed medicines at ₹0.
+      sellingPrice: pm.medicine?.sellingPrice || 0,
       quantity: pm.quantity,
       dosageInstructions: pm.dosageInstructions || "",
       createdAt: pm.createdAt,

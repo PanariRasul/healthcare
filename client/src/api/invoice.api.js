@@ -49,3 +49,15 @@ export function updateInvoice(id, payload) {
     body: JSON.stringify(payload),
   }).then(handle);
 }
+
+// Marks some/all quantities on a PHARMACY invoice as returned by the patient
+// and adds those tablets back to stock. `payload` = { items: [{ index,
+// returnQty }], notes? }. Can be called again later for further partial
+// returns on the same invoice.
+export function markInvoiceReturn(id, payload) {
+  return fetch(`${INVOICES_URL}/${id}/return`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }).then(handle);
+}

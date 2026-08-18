@@ -40,6 +40,9 @@ import {
   UserSearch,
   UserPlus2,
   ArrowLeft,
+  RotateCcw,
+  AlertTriangle,
+  CheckCircle2,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
@@ -48,6 +51,7 @@ import {
   fetchPatientInvoices,
   createInvoice,
   updateInvoice,
+  markInvoiceReturn,
 } from "../api/invoice.api";
 
 // Same letterhead as InvoiceModal.jsx — edit both if the clinic details change.
@@ -102,7 +106,23 @@ const blankRow = () => ({
   description: "",
   qty: 1,
   rate: 0,
+  returnedQty: 0,
 });
+
+// NONE / PARTIAL / FULL -> badge label + color classes for the return status pill.
+const RETURN_STATUS_META = {
+  NONE: null,
+  PARTIAL: {
+    label: "Partially Returned",
+    className:
+      "bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900/30 text-amber-700 dark:text-amber-400",
+  },
+  FULL: {
+    label: "Fully Returned",
+    className:
+      "bg-rose-50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/30 text-rose-600 dark:text-rose-400",
+  },
+};
 
 export default function PharmacyInvoiceModal({
   onClose,
@@ -230,6 +250,17 @@ export default function PharmacyInvoiceModal({
   const [historyLoading, setHistoryLoading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
 
+  // ---- Returns (patient brings tablets back) ----
+  const [returnStatus, setReturnStatus] = useState("NONE"); // NONE | PARTIAL | FULL
+  const [returnedAt, setReturnedAt] = useState(null);
+  const [returnedByDisplay, setReturnedByDisplay] = useState("");
+  const [returnNotesSaved, setReturnNotesSaved] = useState("");
+  const [showReturnPanel, setShowReturnPanel] = useState(false);
+  const [returnQtyByRow, setReturnQtyByRow] = useState({}); // { [rowId]: string }
+  const [returnFormNotes, setReturnFormNotes] = useState("");
+  const [returning, setReturning] = useState(false);
+  const [returnError, setReturnError] = useState("");
+
   // Runs once a patient is chosen (setup screen completed) — preps a fresh
   // blank invoice and loads that patient's prior Pharmacy invoices, if any.
   // Skipped when jumping straight into an existing invoice (invoiceToEdit)
@@ -247,6 +278,14 @@ export default function PharmacyInvoiceModal({
     setInvoiceDate(new Date());
     setCreatedByDisplay(user?.fullName || "");
     setSaveError("");
+    setReturnStatus("NONE");
+    setReturnedAt(null);
+    setReturnedByDisplay("");
+    setReturnNotesSaved("");
+    setShowReturnPanel(false);
+    setReturnQtyByRow({});
+    setReturnFormNotes("");
+    setReturnError("");
 
     fetchNextInvoiceNumber("PHARMACY")
       .then((r) => setInvoiceNumber(r.invoiceNumber))
@@ -308,10 +347,11 @@ export default function PharmacyInvoiceModal({
       items.length
         ? items.map((it) => ({
             id: nextRowId(),
-            medicineId: null,
+            medicineId: it.medicineId || null,
             description: it.description,
             qty: it.qty,
             rate: it.rate,
+            returnedQty: Number(it.returnedQty) || 0,
           }))
         : [blankRow()],
     );
@@ -324,6 +364,14 @@ export default function PharmacyInvoiceModal({
     setInvoiceDate(inv.createdAt);
     setCreatedByDisplay(inv.createdByName || "—");
     setSavedInvoiceId(inv.id);
+    setReturnStatus(inv.returnStatus || "NONE");
+    setReturnedAt(inv.returnedAt || null);
+    setReturnedByDisplay(inv.returnedByName || "");
+    setReturnNotesSaved(inv.returnNotes || "");
+    setShowReturnPanel(false);
+    setReturnQtyByRow({});
+    setReturnFormNotes("");
+    setReturnError("");
     setShowHistory(false);
   }
 
@@ -368,6 +416,14 @@ export default function PharmacyInvoiceModal({
     setInvoiceDate(new Date());
     setCreatedByDisplay(user?.fullName || "");
     setSaveError("");
+    setReturnStatus("NONE");
+    setReturnedAt(null);
+    setReturnedByDisplay("");
+    setReturnNotesSaved("");
+    setShowReturnPanel(false);
+    setReturnQtyByRow({});
+    setReturnFormNotes("");
+    setReturnError("");
     fetchNextInvoiceNumber("PHARMACY")
       .then((r) => setInvoiceNumber(r.invoiceNumber))
       .catch(() => {});
@@ -382,11 +438,13 @@ export default function PharmacyInvoiceModal({
         patientType: "PHARMACY",
         patientId: chosenPatient.id,
         patientName: chosenPatient.name,
-        lineItems: lineItems.map(({ description, qty, rate }) => ({
+        lineItems: lineItems.map(({ medicineId, description, qty, rate }) => ({
+          medicineId: medicineId || null,
           description,
           qty: Number(qty) || 0,
           rate: Number(rate) || 0,
           amount: (Number(qty) || 0) * (Number(rate) || 0),
+          returnedQty: 0,
         })),
         subtotal,
         discount: discountVal,
@@ -422,12 +480,16 @@ export default function PharmacyInvoiceModal({
     setSaveError("");
     try {
       const payload = {
-        lineItems: lineItems.map(({ description, qty, rate }) => ({
-          description,
-          qty: Number(qty) || 0,
-          rate: Number(rate) || 0,
-          amount: (Number(qty) || 0) * (Number(rate) || 0),
-        })),
+        lineItems: lineItems.map(
+          ({ medicineId, description, qty, rate, returnedQty }) => ({
+            medicineId: medicineId || null,
+            description,
+            qty: Number(qty) || 0,
+            rate: Number(rate) || 0,
+            amount: (Number(qty) || 0) * (Number(rate) || 0),
+            returnedQty: Number(returnedQty) || 0,
+          }),
+        ),
         subtotal,
         discount: discountVal,
         gstPercent: Number(gstPercent) || 0,
@@ -452,18 +514,101 @@ export default function PharmacyInvoiceModal({
     }
   }
 
+  // How many units of this row are still eligible to be returned right now
+  // (sold − already returned). Only medicine-linked rows can be auto-restocked.
+  const maxReturnableFor = (row) =>
+    Math.max(0, (Number(row.qty) || 0) - (Number(row.returnedQty) || 0));
+
+  const returnableRows = lineItems.filter(
+    (r) => r.medicineId && maxReturnableFor(r) > 0,
+  );
+
+  async function handleConfirmReturn() {
+    setReturnError("");
+
+    const items = lineItems
+      .map((row, index) => ({
+        index,
+        row,
+        returnQty: Number(returnQtyByRow[row.id]) || 0,
+      }))
+      .filter((x) => x.returnQty > 0);
+
+    if (items.length === 0) {
+      setReturnError(
+        "Enter how many tablets are being returned for at least one medicine.",
+      );
+      return;
+    }
+
+    // Verify the counts one more time on the client before sending — the
+    // server re-verifies again against the saved invoice as the final check.
+    for (const { row, returnQty } of items) {
+      const max = maxReturnableFor(row);
+      if (returnQty > max) {
+        setReturnError(
+          `"${row.description}" — only ${max} tablet(s) can be returned (sold ${row.qty}, already returned ${row.returnedQty || 0}). Please recheck the count.`,
+        );
+        return;
+      }
+    }
+
+    setReturning(true);
+    try {
+      const updated = await markInvoiceReturn(savedInvoiceId, {
+        items: items.map(({ index, returnQty }) => ({ index, returnQty })),
+        notes: returnFormNotes,
+      });
+
+      // Merge the server's authoritative returnedQty back onto our rows.
+      const updatedLineItems = Array.isArray(updated.lineItems)
+        ? updated.lineItems
+        : [];
+      setLineItems((rows) =>
+        rows.map((r, i) => ({
+          ...r,
+          returnedQty: Number(updatedLineItems[i]?.returnedQty) || 0,
+        })),
+      );
+      setReturnStatus(updated.returnStatus || "NONE");
+      setReturnedAt(updated.returnedAt || new Date().toISOString());
+      setReturnedByDisplay(updated.returnedByName || user?.fullName || "");
+      setReturnNotesSaved(updated.returnNotes || "");
+      setReturnQtyByRow({});
+      setReturnFormNotes("");
+      setShowReturnPanel(false);
+    } catch (err) {
+      setReturnError(err.message || "Failed to process the return.");
+    } finally {
+      setReturning(false);
+    }
+  }
+
   const handlePrint = () => window.print();
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs invoice-modal-backdrop">
       <style>{`
         @media print {
+          /* @page margin: 0 removes the browser's own header/footer strip
+             (page title/URL up top, date-time-stamp + page number at the
+             bottom) — there's no margin box left for the browser to draw
+             them into. We add our own whitespace back via padding on
+             .invoice-print-area below, so the printed page still looks
+             properly framed. */
+          @page { margin: 0; size: auto; }
+          html, body { margin: 0 !important; padding: 0 !important; height: auto !important; background: #fff !important; }
           body * { visibility: hidden; }
           .invoice-print-area, .invoice-print-area * { visibility: visible; }
           .invoice-print-area {
-            position: fixed; inset: 0; width: 100%; margin: 0; padding: 24px;
+            position: absolute; top: 0; left: 0; width: 100%; margin: 0;
+            padding: 10mm 12mm 8mm;
             box-shadow: none !important; border: none !important; max-height: none !important;
-            overflow: visible !important;
+            overflow: visible !important; border-radius: 0 !important;
+            /* Natural height (no forced 100vh) — a short invoice only
+               takes up as much of the page as its content needs, instead
+               of always stretching to fill/reserve a full page. */
+            height: auto !important;
           }
           .no-print { display: none !important; }
           .invoice-print-area input, .invoice-print-area select, .invoice-print-area textarea {
@@ -471,6 +616,11 @@ export default function PharmacyInvoiceModal({
             padding: 0 !important; box-shadow: none !important; -webkit-appearance: none;
             appearance: none;
           }
+          /* Compact, uniform 12px print type across the whole invoice. */
+          .invoice-print-area, .invoice-print-area * { font-size: 12px !important; line-height: 1.4 !important; }
+          .invoice-print-area .invoice-clinic-name { font-size: 12px !important; }
+          .invoice-print-area .invoice-clinic-tagline { font-size: 9px !important; }
+          .invoice-print-area .invoice-badge { font-size: 9px !important; }
         }
       `}</style>
 
@@ -516,6 +666,16 @@ export default function PharmacyInvoiceModal({
                   {showHistory ? "Hide" : "Show"} History
                   {history.length > 0 ? ` (${history.length})` : ""}
                 </button>
+                {savedInvoiceId && returnableRows.length > 0 && (
+                  <button
+                    onClick={() => setShowReturnPanel((v) => !v)}
+                    title="Record tablets returned by the patient"
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-full bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40 text-amber-700 dark:text-amber-400 text-xs font-extrabold"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                    {showReturnPanel ? "Hide Return" : "Mark Return"}
+                  </button>
+                )}
               </>
             )}
             <button
@@ -526,6 +686,106 @@ export default function PharmacyInvoiceModal({
             </button>
           </div>
         </div>
+
+        {chosenPatient && showReturnPanel && (
+          <div className="no-print mx-6 mt-4 bg-amber-50/60 dark:bg-amber-950/10 border border-amber-200/80 dark:border-amber-900/30 rounded-2xl p-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <RotateCcw className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+              <h4 className="text-xs font-extrabold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                Record a Return
+              </h4>
+            </div>
+            <p className="text-[11px] text-amber-700/80 dark:text-amber-400/70 font-medium leading-relaxed">
+              Enter exactly how many tablets/strips the patient is physically
+              returning for each medicine — double-check the count before
+              confirming. Only that quantity is added back to pharmacy stock.
+              A patient can return every tablet they bought or only some of
+              them; you can also record further returns later.
+            </p>
+
+            <div className="space-y-2">
+              {returnableRows.map((row) => {
+                const max = maxReturnableFor(row);
+                return (
+                  <div
+                    key={row.id}
+                    className="flex flex-wrap items-center justify-between gap-2 bg-white dark:bg-slate-900 border border-amber-100 dark:border-amber-900/30 rounded-xl px-3 py-2"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-xs font-extrabold text-slate-900 dark:text-white truncate">
+                        {row.description || "Medicine"}
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-medium">
+                        Sold {row.qty}
+                        {Number(row.returnedQty) > 0
+                          ? ` · Already returned ${row.returnedQty}`
+                          : ""}{" "}
+                        · Max returnable now:{" "}
+                        <span className="font-extrabold text-amber-600 dark:text-amber-400">
+                          {max}
+                        </span>
+                      </div>
+                    </div>
+                    <input
+                      type="number"
+                      min={0}
+                      max={max}
+                      value={returnQtyByRow[row.id] ?? ""}
+                      onChange={(e) =>
+                        setReturnQtyByRow((m) => ({
+                          ...m,
+                          [row.id]: e.target.value,
+                        }))
+                      }
+                      placeholder="0"
+                      className="w-24 bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs text-right font-bold focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                );
+              })}
+            </div>
+
+            <div>
+              <label className="block text-[10px] font-extrabold uppercase tracking-wider text-amber-700/80 dark:text-amber-400/70 mb-1">
+                Return Notes (optional)
+              </label>
+              <input
+                value={returnFormNotes}
+                onChange={(e) => setReturnFormNotes(e.target.value)}
+                placeholder="e.g. Reason for return, condition of strips"
+                className="w-full bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-900/40 rounded-xl px-3 py-2 text-xs font-medium focus:outline-none focus:border-amber-500"
+              />
+            </div>
+
+            {returnError && (
+              <div className="flex items-start gap-2 bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/30 rounded-xl px-3 py-2 text-rose-600 dark:text-rose-400 text-xs font-bold">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                {returnError}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  setShowReturnPanel(false);
+                  setReturnQtyByRow({});
+                  setReturnError("");
+                }}
+                className="px-4 py-2 rounded-full text-xs font-extrabold border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmReturn}
+                disabled={returning}
+                className="flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-extrabold px-5 py-2 rounded-full shadow-xs disabled:opacity-50"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                {returning ? "Confirming..." : "Confirm Return & Restock"}
+              </button>
+            </div>
+          </div>
+        )}
 
         {!chosenPatient ? (
           <div className="p-6 space-y-5">
@@ -751,23 +1011,49 @@ export default function PharmacyInvoiceModal({
             )}
 
             <div className="p-6 sm:p-8 space-y-6 text-slate-900 dark:text-white">
-              <div className="text-center border-b-2 border-slate-800 dark:border-slate-200 pb-4">
+              {/* Letterhead — accent bar + compact clinic name (12px) with an
+                  "INVOICE" tag on the side for a cleaner, less clinical look. */}
+              <div className="relative text-center pb-4 border-b-2 border-[#0f4a29] dark:border-[#52b788]">
+                <span className="invoice-badge no-print absolute right-0 top-0 text-[9px] font-extrabold tracking-[0.2em] uppercase text-white bg-[#0f4a29] px-2.5 py-1 rounded-full">
+                  Invoice
+                </span>
                 {CLINIC.logoUrl && (
                   <img
                     src={CLINIC.logoUrl}
                     alt="Clinic logo"
-                    className="h-16 mx-auto mb-2 object-contain"
+                    className="h-12 mx-auto mb-1.5 object-contain"
                   />
                 )}
-                <h1 className="text-xl font-extrabold tracking-wide">
+                <h1
+                  className="invoice-clinic-name font-extrabold tracking-wide"
+                  style={{ fontSize: "12px" }}
+                >
                   {CLINIC.name}
                 </h1>
                 {CLINIC.tagline && (
-                  <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                  <p className="invoice-clinic-tagline text-[10px] font-semibold text-slate-500 dark:text-slate-400 mt-0.5">
                     {CLINIC.tagline}
                   </p>
                 )}
               </div>
+
+              {returnStatus !== "NONE" && (
+                <div
+                  className={`flex flex-wrap items-center justify-between gap-2 border rounded-2xl px-4 py-2 text-xs font-bold ${RETURN_STATUS_META[returnStatus]?.className || ""}`}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    {RETURN_STATUS_META[returnStatus]?.label}
+                    {returnedAt ? ` · ${fmtDateTime(returnedAt)}` : ""}
+                    {returnedByDisplay ? ` · by ${returnedByDisplay}` : ""}
+                  </span>
+                  {returnNotesSaved && (
+                    <span className="no-print font-medium opacity-80">
+                      "{returnNotesSaved}"
+                    </span>
+                  )}
+                </div>
+              )}
 
               {savedInvoiceId && (
                 <div className="no-print bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/30 rounded-2xl px-4 py-2 text-emerald-700 dark:text-emerald-400 text-xs font-bold">
@@ -961,6 +1247,11 @@ export default function PharmacyInvoiceModal({
                         </td>
                         <td className="py-1.5 pl-2 text-right font-extrabold align-top">
                           {fmtINR((Number(r.qty) || 0) * (Number(r.rate) || 0))}
+                          {Number(r.returnedQty) > 0 && (
+                            <div className="text-[9px] font-bold text-amber-600 dark:text-amber-400 normal-case">
+                              ↩ {r.returnedQty} returned
+                            </div>
+                          )}
                         </td>
                         <td className="py-1.5 pl-1 no-print align-top">
                           <button
@@ -983,7 +1274,7 @@ export default function PharmacyInvoiceModal({
               </div>
 
               <div className="flex justify-end">
-                <div className="w-full sm:w-72 space-y-1.5 text-xs font-medium">
+                <div className="w-full sm:w-72 space-y-1.5 text-xs font-medium bg-slate-50/70 dark:bg-slate-800/30 border border-slate-100 dark:border-slate-800 rounded-2xl p-4">
                   <div className="flex justify-between">
                     <span className="text-slate-400">Subtotal</span>
                     <span className="font-extrabold">{fmtINR(subtotal)}</span>
@@ -1010,9 +1301,9 @@ export default function PharmacyInvoiceModal({
                     <span className="text-slate-400">GST Amount</span>
                     <span className="font-extrabold">{fmtINR(gstVal)}</span>
                   </div>
-                  <div className="flex justify-between border-t-2 border-slate-800 dark:border-slate-200 pt-1.5 mt-1.5">
+                  <div className="flex justify-between border-t-2 border-[#0f4a29] dark:border-[#52b788] pt-1.5 mt-1.5">
                     <span className="font-extrabold">Grand Total</span>
-                    <span className="font-extrabold">{fmtINR(grandTotal)}</span>
+                    <span className="font-extrabold text-[#0f4a29] dark:text-[#52b788]">{fmtINR(grandTotal)}</span>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-slate-400">Paid</span>

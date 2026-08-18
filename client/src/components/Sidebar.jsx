@@ -26,6 +26,7 @@ import {
   Briefcase,
   ActivitySquare,
   Receipt,
+  DoorOpen,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 
@@ -41,6 +42,7 @@ const menuConfig = {
     { label: "Dashboard", icon: LayoutDashboard, to: "/ipd-dashboard" },
     { label: "Admit Patient", icon: BedDouble, to: "/ipd/admit" },
     { label: "All Patients", icon: Users, to: "/ipd/patients" },
+    { label: "Discharged Patients", icon: DoorOpen, to: "/ipd/discharged" },
     { label: "Payments", icon: Wallet, to: "/ipd/payments" },
     { label: "Follow Ups", icon: CalendarClock, to: "/ipd/followups" },
     { label: "Pharmacy Billing", icon: Receipt, to: "/ipd/pharmacy-billing" },
@@ -58,6 +60,11 @@ const menuConfig = {
   "doctor-IPD": [
     { label: "Dashboard", icon: LayoutDashboard, to: "/doctor/ipd/dashboard" },
     { label: "IPD Patients", icon: BedDouble, to: "/doctor/ipd" },
+    {
+      label: "Discharged Patients",
+      icon: DoorOpen,
+      to: "/doctor/ipd/discharged",
+    },
     { label: "Follow-Ups", icon: CalendarClock, to: "/doctor/ipd/followups" },
     {
       label: "Pharmacy Billing",
@@ -251,13 +258,11 @@ export default function Sidebar({ collapsed, setCollapsed }) {
                     <button
                       key={m}
                       onClick={() => handleModuleSwitch(m)}
-                      className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-full text-[11px] font-bold transition-all ${
-                        mini ? "w-full px-0 py-2" : ""
-                      } ${
-                        isActiveTab
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-full text-[11px] font-bold transition-all ${mini ? "w-full px-0 py-2" : ""
+                        } ${isActiveTab
                           ? "bg-white dark:bg-slate-900 text-[#0f4a29] dark:text-[#52b788] shadow-xs"
                           : "text-slate-500 hover:text-slate-800"
-                      }`}
+                        }`}
                     >
                       <Icon
                         className="w-3.5 h-3.5"
@@ -305,23 +310,20 @@ export default function Sidebar({ collapsed, setCollapsed }) {
                             [link.label]: !isOpen,
                           }));
                         }}
-                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition-all group relative ${
-                          mini ? "justify-center px-0" : ""
-                        } ${
-                          isGroupActive
+                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition-all group relative ${mini ? "justify-center px-0" : ""
+                          } ${isGroupActive
                             ? "text-[#0f4a29] dark:text-white bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 shadow-xs font-extrabold"
                             : "text-[#6b7280] dark:text-slate-400 hover:text-[#155430] dark:hover:text-white"
-                        }`}
+                          }`}
                       >
                         {isGroupActive && !mini && (
                           <span className="absolute left-0 top-1/3 bottom-1/3 w-1 rounded-r-full bg-[#0f4a29]" />
                         )}
                         <GroupIcon
-                          className={`flex-shrink-0 ${mini ? "w-5 h-5" : "w-4 h-4"} ${
-                            isGroupActive
+                          className={`flex-shrink-0 ${mini ? "w-5 h-5" : "w-4 h-4"} ${isGroupActive
                               ? "text-[#0f4a29] dark:text-[#52b788]"
                               : "text-[#9ca3af] group-hover:text-[#4b5563]"
-                          }`}
+                            }`}
                           strokeWidth={isGroupActive ? 2.5 : 2}
                         />
                         {!mini && (
@@ -331,9 +333,8 @@ export default function Sidebar({ collapsed, setCollapsed }) {
                         )}
                         {!mini && (
                           <ChevronDown
-                            className={`w-3.5 h-3.5 flex-shrink-0 text-[#9ca3af] transition-transform duration-200 ${
-                              isOpen ? "rotate-180" : ""
-                            }`}
+                            className={`w-3.5 h-3.5 flex-shrink-0 text-[#9ca3af] transition-transform duration-200 ${isOpen ? "rotate-180" : ""
+                              }`}
                           />
                         )}
                       </button>
@@ -349,21 +350,19 @@ export default function Sidebar({ collapsed, setCollapsed }) {
                                   end
                                   onClick={() => setMobileOpen(false)}
                                   className={({ isActive }) =>
-                                    `flex items-center gap-2.5 px-3 py-2 rounded-lg text-[11px] font-bold transition-all ${
-                                      isActive
-                                        ? "text-[#0f4a29] dark:text-white bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 shadow-xs font-extrabold"
-                                        : "text-[#6b7280] dark:text-slate-400 hover:text-[#155430] dark:hover:text-white"
+                                    `flex items-center gap-2.5 px-3 py-2 rounded-lg text-[11px] font-bold transition-all ${isActive
+                                      ? "text-[#0f4a29] dark:text-white bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 shadow-xs font-extrabold"
+                                      : "text-[#6b7280] dark:text-slate-400 hover:text-[#155430] dark:hover:text-white"
                                     }`
                                   }
                                 >
                                   {({ isActive }) => (
                                     <>
                                       <ChildIcon
-                                        className={`w-3.5 h-3.5 flex-shrink-0 ${
-                                          isActive
+                                        className={`w-3.5 h-3.5 flex-shrink-0 ${isActive
                                             ? "text-[#0f4a29] dark:text-[#52b788]"
                                             : "text-[#9ca3af]"
-                                        }`}
+                                          }`}
                                       />
                                       <span className="truncate">
                                         {child.label}
@@ -389,12 +388,10 @@ export default function Sidebar({ collapsed, setCollapsed }) {
                       end
                       onClick={() => setMobileOpen(false)}
                       className={({ isActive }) =>
-                        `flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition-all group relative ${
-                          mini ? "justify-center px-0" : ""
-                        } ${
-                          isActive
-                            ? "text-[#0f4a29] dark:text-white bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 shadow-xs font-extrabold"
-                            : "text-[#6b7280] dark:text-slate-400 hover:text-[#155430] dark:hover:text-white"
+                        `flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition-all group relative ${mini ? "justify-center px-0" : ""
+                        } ${isActive
+                          ? "text-[#0f4a29] dark:text-white bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 shadow-xs font-extrabold"
+                          : "text-[#6b7280] dark:text-slate-400 hover:text-[#155430] dark:hover:text-white"
                         }`
                       }
                     >
@@ -405,11 +402,10 @@ export default function Sidebar({ collapsed, setCollapsed }) {
                             <span className="absolute left-0 top-1/3 bottom-1/3 w-1 rounded-r-full bg-[#0f4a29]" />
                           )}
                           <Icon
-                            className={`flex-shrink-0 ${mini ? "w-5 h-5" : "w-4 h-4"} ${
-                              isActive
+                            className={`flex-shrink-0 ${mini ? "w-5 h-5" : "w-4 h-4"} ${isActive
                                 ? "text-[#0f4a29] dark:text-[#52b788]"
                                 : "text-[#9ca3af] group-hover:text-[#4b5563]"
-                            }`}
+                              }`}
                             strokeWidth={isActive ? 2.5 : 2}
                           />
                           {!mini && (

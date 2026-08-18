@@ -53,6 +53,17 @@ export function deletePatient(id) {
   return fetch(`${IPD_URL}/${id}`, { method: "DELETE" }).then(handle);
 }
 
+// Narrow "quick action" discharge-status update — see dischargePatient() in
+// ipd.controller.js. payload: { dischargeStatus: "Admitted" | "Ready For
+// Discharge" | "Discharged", dischargeDate?, dischargeTime? }
+export function dischargePatient(id, payload) {
+  return fetch(`${IPD_URL}/${id}/discharge`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }).then(handle);
+}
+
 // --- documents ---
 
 export function uploadDocument(patientId, file, type) {

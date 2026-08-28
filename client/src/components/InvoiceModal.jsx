@@ -281,7 +281,7 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
       (data.dailyCharges || []).forEach((c) => {
         items.push({
           id: nextRowId(),
-          description: `Per Day Bed / Treatment Charges ${c.date ? ` — ${fmtDate(c.date)}` : ""}`,
+          description: `Per-Day Bed/Treatment Charges${c.date ? ` — ${fmtDate(c.date)}` : ""}`,
           qty: c.days || 1,
           rate: c.rate || 0,
         });
@@ -898,7 +898,7 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                   </p>
                 )}
                 <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 mt-0.5">
-                  GSTIN: 29ABBFV4474H1ZS
+                  GSTIN: 29ABCDE1234F1Z5
                 </p>
               </div>
 
@@ -1002,41 +1002,52 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                         key={r.id}
                         className="border-b border-slate-100 dark:border-slate-800"
                       >
-                        <td className="py-1.5 pr-2 text-slate-400">{i + 1}</td>
-                        <td className="py-1.5 px-2">
+                        <td className="py-1.5 pr-2 text-slate-400 align-top pt-2.5">
+                          {i + 1}
+                        </td>
+                        <td className="py-1.5 px-2 align-top pt-2">
                           <input
                             value={r.description}
                             onChange={(e) =>
                               updateRow(r.id, "description", e.target.value)
                             }
                             placeholder="Treatment / medicine name"
-                            className="w-full bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-[#0f4a29]"
+                            className="w-full bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-[#0f4a29] print:hidden"
                           />
+                          <span className="hidden print:block whitespace-pre-wrap break-words text-xs font-medium">
+                            {r.description}
+                          </span>
                         </td>
-                        <td className="py-1.5 px-2">
+                        <td className="py-1.5 px-2 align-top pt-2">
                           <input
                             type="number"
                             value={r.qty}
                             onChange={(e) =>
                               updateRow(r.id, "qty", e.target.value)
                             }
-                            className="w-full bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-right focus:outline-none focus:border-[#0f4a29]"
+                            className="w-full bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-right focus:outline-none focus:border-[#0f4a29] print:hidden"
                           />
+                          <span className="hidden print:block text-right text-xs font-medium">
+                            {r.qty}
+                          </span>
                         </td>
-                        <td className="py-1.5 px-2">
+                        <td className="py-1.5 px-2 align-top pt-2">
                           <input
                             type="number"
                             value={r.rate}
                             onChange={(e) =>
                               updateRow(r.id, "rate", e.target.value)
                             }
-                            className="w-full bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-right focus:outline-none focus:border-[#0f4a29]"
+                            className="w-full bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-right focus:outline-none focus:border-[#0f4a29] print:hidden"
                           />
+                          <span className="hidden print:block text-right text-xs font-medium">
+                            {r.rate}
+                          </span>
                         </td>
-                        <td className="py-1.5 pl-2 text-right font-extrabold">
+                        <td className="py-1.5 pl-2 text-right font-extrabold align-top pt-2.5">
                           {fmtINR((Number(r.qty) || 0) * (Number(r.rate) || 0))}
                         </td>
-                        <td className="py-1.5 pl-1 no-print">
+                        <td className="py-1.5 pl-1 no-print align-top pt-2.5">
                           <button
                             onClick={() => removeRow(r.id)}
                             className="text-slate-300 hover:text-rose-500"
@@ -1072,8 +1083,11 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                       type="number"
                       value={discount}
                       onChange={(e) => setDiscount(e.target.value)}
-                      className="w-24 bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-right focus:outline-none focus:border-[#0f4a29]"
+                      className="w-24 bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-right focus:outline-none focus:border-[#0f4a29] print:hidden"
                     />
+                    <span className="hidden print:inline-block font-extrabold text-slate-900">
+                      {discount}
+                    </span>
                   </div>
 
                   <div
@@ -1084,8 +1098,11 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                       type="number"
                       value={gstPercent}
                       onChange={(e) => setGstPercent(e.target.value)}
-                      className="w-24 bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-right focus:outline-none focus:border-[#0f4a29]"
+                      className="w-24 bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-right focus:outline-none focus:border-[#0f4a29] print:hidden"
                     />
+                    <span className="hidden print:inline-block font-extrabold text-slate-900">
+                      {gstPercent}
+                    </span>
                   </div>
 
                   <div
@@ -1107,8 +1124,11 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                       type="number"
                       value={paid}
                       onChange={(e) => setPaid(e.target.value)}
-                      className="w-24 bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-right focus:outline-none focus:border-[#0f4a29]"
+                      className="w-24 bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-right focus:outline-none focus:border-[#0f4a29] print:hidden"
                     />
+                    <span className="hidden print:inline-block font-extrabold text-slate-900">
+                      {paid}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="font-extrabold">Balance</span>
@@ -1130,7 +1150,7 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                   <select
                     value={paymentMethod}
                     onChange={(e) => setPaymentMethod(e.target.value)}
-                    className="w-full bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-[#0f4a29]"
+                    className="w-full bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-[#0f4a29] print:hidden"
                   >
                     {PAYMENT_METHODS.map((m) => (
                       <option key={m} value={m}>
@@ -1138,6 +1158,9 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                       </option>
                     ))}
                   </select>
+                  <span className="hidden print:block text-xs font-extrabold text-slate-900 mt-1">
+                    {paymentMethod}
+                  </span>
                 </div>
                 <div className={!notes.trim() ? "print:hidden print-hide" : ""}>
                   <div className="text-slate-400 text-[10px] uppercase font-bold mb-1">
@@ -1147,8 +1170,11 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
                     placeholder="e.g. Next visit date"
-                    className="w-full bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-[#0f4a29]"
+                    className="w-full bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-[#0f4a29] print:hidden"
                   />
+                  <span className="hidden print:block text-xs font-extrabold text-slate-900 mt-1 whitespace-pre-wrap break-words">
+                    {notes}
+                  </span>
                 </div>
               </div>
 

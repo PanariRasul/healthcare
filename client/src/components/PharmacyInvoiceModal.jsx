@@ -1331,7 +1331,9 @@ export default function PharmacyInvoiceModal({
               {/* Summary & Net Total Grid */}
               <div className="grid grid-cols-12 gap-3 pt-2 border-t border-[#cbd5e1] items-start">
                 <div className="col-span-6 text-[9.5px] font-mono text-slate-500 space-y-1">
-                  <p>Terms: Medicines returnable within 7 days with bill.</p>
+                  <p>
+                    Terms: Medicines once sold cannot be returned or exchanged.
+                  </p>
 
                   <div className="pt-2 grid grid-cols-2 gap-2 text-xs font-sans pr-4">
                     <div>

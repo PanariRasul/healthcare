@@ -17,9 +17,6 @@ import {
 
 const DISCHARGE_STATUSES = ["Admitted", "Ready For Discharge", "Discharged"];
 
-// Money is stored as Float — round to 2 decimals so edits never introduce
-// binary rounding artifacts into totalStay/balance (mirrors the same helper
-// in ipdPayment.controller.js).
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
 async function generateSerialNumber() {
@@ -34,10 +31,6 @@ async function generateSerialNumber() {
   return `IPD-${String(next).padStart(3, "0")}`;
 }
 
-// Kept in sync with calcSettlement() in ipdPayment.controller.js — both
-// controllers can end up computing a patient's settlement status, so they
-// need to agree (including the "Overpaid" state; see buildPatientData()
-// below for why balance is allowed to go negative here too).
 function calcSettlement(totalStay, totalPaid) {
   const stay = round2(totalStay);
   const paid = round2(totalPaid);
@@ -52,23 +45,6 @@ function toNum(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
-// Normalizes incoming body into the flat patient fields + computed totals.
-//
-// `existingTotalPaid` (pass this on UPDATE only) is the current, authoritative
-// totalPaid already stored on the patient — which is normally maintained by
-// ipdPayment.controller.js's recalcPatientTotals() from the real IPD_Payment
-// ledger (including any overpayment/credit). When it's provided, that value
-// — not deposit+cash+upi+card from this form submission — is what balance
-// and settlementStatus get computed from, and it's what gets saved back.
-//
-// Why this matters: deposit/cash/upi/card here represent the amount entered
-// at admission time. Without this guard, saving ANY edit through this form
-// (e.g. adding a daily charge, editing follow-up notes) would recompute
-// totalPaid from those four fields alone and silently overwrite the real
-// payment total — wiping out every payment recorded afterwards through the
-// Payments module, even though the actual IPD_Payment rows are untouched.
-// On CREATE there's no existing payment history yet, so deposit+cash+upi+card
-// is correctly the starting totalPaid.
 function buildPatientData(body, { existingTotalPaid } = {}) {
   const dailyCharges = Array.isArray(body.dailyCharges)
     ? body.dailyCharges
@@ -86,14 +62,10 @@ function buildPatientData(body, { existingTotalPaid } = {}) {
 
   const totalStay = dailyCharges.reduce((s, c) => s + toNum(c.amount), 0);
 
-  // On update, trust the Payments-module total; on create, seed it from
-  // whatever was entered as the initial admission payment.
   const totalPaid = round2(
     typeof existingTotalPaid === "number" ? existingTotalPaid : enteredPaid,
   );
-  // Not clamped to 0 — a negative balance is an advance credit (see the
-  // Payments module), and clamping here would silently erase it every time
-  // a patient record is edited.
+
   const balance = round2(totalStay - totalPaid);
 
   const dischargeStatus = body.dischargeStatus || "Admitted";
@@ -120,7 +92,6 @@ function buildPatientData(body, { existingTotalPaid } = {}) {
       dischargeStatus,
       notes: body.notes || null,
 
-      // --- Follow-up & reminder tracking ---
       followUpDate: body.followUpDate ? new Date(body.followUpDate) : null,
       condition: conditionToDb(body.condition || null),
       followUpDesc: body.followUpDesc || null,
@@ -149,6 +120,7 @@ function buildPatientData(body, { existingTotalPaid } = {}) {
 
     dailyCharges: dailyCharges.map((c) => ({
       date: new Date(c.date || body.admissionDate),
+      toDate: c.toDate ? new Date(c.toDate) : null,
       days: toNum(c.days),
       rate: toNum(c.rate),
       amount: toNum(c.amount),
@@ -173,39 +145,21 @@ function buildPatientData(body, { existingTotalPaid } = {}) {
       rate: toNum(c.rate),
       days: toNum(c.days),
       amount: toNum(c.amount),
+      // --- NEW FIELDS MAPPED HERE ---
+      amountPaid: toNum(c.amountPaid),
+      paymentDate: c.paymentDate ? new Date(c.paymentDate) : null,
+      paymentStatus: c.paymentStatus || "Pending",
     })),
   };
 }
 
-// Thrown for any pharmacy-stock problem hit while saving an IPD patient's
-// medicines (missing medicine, not enough stock left). Kept as its own class
-// so createPatient/updatePatient can tell "bad request" (400) apart from a
-// genuine server error (500) after it bubbles up out of a $transaction.
 class StockError extends Error {}
 
-// Actually applies the pharmacy-stock impact of an IPD patient's medicines —
-// this is the fix for medicines not being deducted from stock at all.
-//
-// Works on the NET DIFFERENCE between what the patient's medicines list used
-// to be (`previousMedicines`, straight from the DB) and what it's being
-// saved as now (`newMedicines`), grouped by medicineId:
-//   - On CREATE, previousMedicines is [], so every medicine's full quantity
-//     is deducted.
-//   - On UPDATE, only the delta moves: increasing a quantity (or adding a
-//     new medicine) deducts the extra amount; decreasing a quantity (or
-//     removing a medicine) returns the difference to stock. Saving the same
-//     medicines/quantities again is a no-op — nothing is double-deducted.
-// Every actual stock change is logged to StockHistory, same as OPD
-// prescriptions and the Pharmacy "Add/Reduce Stock" action, so the trail is
-// consistent across the whole app.
-//
-// Must be called with a Prisma transaction client (`tx`) so the stock
-// check/update and the patient/medicine rows commit or roll back together.
 async function applyIpdMedicineStockChanges(
   tx,
   { previousMedicines = [], newMedicines = [], contextLabel },
 ) {
-  const deltas = new Map(); // medicineId -> net tablets needed (positive = deduct, negative = restock)
+  const deltas = new Map();
 
   for (const m of previousMedicines) {
     if (!m.medicineId) continue;
@@ -223,7 +177,7 @@ async function applyIpdMedicineStockChanges(
   }
 
   for (const [medicineId, delta] of deltas.entries()) {
-    if (!delta) continue; // unchanged — nothing to do
+    if (!delta) continue;
 
     const med = await tx.medicine.findUnique({ where: { id: medicineId } });
     if (!med) {
@@ -247,9 +201,6 @@ async function applyIpdMedicineStockChanges(
         medicineId,
         date: new Date(),
         action: delta > 0 ? "REDUCE" : "ADD",
-        // Positive quantity = added to stock, negative = removed —
-        // consistent with OPD's createPrescription and the Pharmacy
-        // Add/Reduce Stock action.
         quantity: -delta,
         reason:
           delta > 0
@@ -262,24 +213,16 @@ async function applyIpdMedicineStockChanges(
 
 const patientInclude = {
   dailyCharges: { orderBy: { date: "asc" } },
-
-  // `medicine: { select: { sellingPrice: true } }` is included so the
-  // OPD/IPD "Generate Invoice" screen can prefill each medicine's price —
-  // previously this returned bare IPD_Medicine rows with no price at all,
-  // which is why invoice line items always came in at ₹0 and had to be
-  // typed in by hand.
   medicines: {
     include: {
       medicine: { select: { sellingPrice: true } },
     },
   },
-
   additionalCharges: {
     orderBy: {
       createdAt: "asc",
     },
   },
-
   documents: {
     orderBy: {
       createdAt: "desc",
@@ -289,7 +232,6 @@ const patientInclude = {
 
 // ---------- controllers ----------
 
-// GET /api/ipd/patients
 export async function listPatients(req, res) {
   try {
     const { search = "", status = "", page = "1", limit = "7" } = req.query;
@@ -334,10 +276,6 @@ export async function listPatients(req, res) {
   }
 }
 
-// GET /api/ipd/patients/followups
-// Anyone with an actual follow-up date set, soonest first — mirrors the OPD
-// follow-ups endpoint so IPDFollowUps.jsx can reuse the same UX/shape.
-// IMPORTANT: must be registered before "/:id" in the routes file.
 export async function listFollowUps(req, res) {
   try {
     const patients = await prisma.iPD_Patient.findMany({
@@ -352,7 +290,6 @@ export async function listFollowUps(req, res) {
   }
 }
 
-// GET /api/ipd/patients/:id
 export async function getPatient(req, res) {
   try {
     const patient = await prisma.iPD_Patient.findUnique({
@@ -367,7 +304,6 @@ export async function getPatient(req, res) {
   }
 }
 
-// GET /api/ipd/patients/stats  (for dashboard)
 export async function getStats(req, res) {
   try {
     const [
@@ -415,7 +351,6 @@ export async function getStats(req, res) {
   }
 }
 
-// POST /api/ipd/patients
 export async function createPatient(req, res) {
   try {
     const { flat, dailyCharges, medicines, additionalCharges } =
@@ -445,9 +380,6 @@ export async function createPatient(req, res) {
           include: patientInclude,
         });
 
-        // Actually deduct the prescribed medicines from pharmacy stock —
-        // previously this only validated availability and never touched
-        // `medicine.quantity`, so stock was never reduced on admission.
         await applyIpdMedicineStockChanges(tx, {
           previousMedicines: [],
           newMedicines: medicines,
@@ -469,7 +401,6 @@ export async function createPatient(req, res) {
   }
 }
 
-// PUT /api/ipd/patients/:id
 export async function updatePatient(req, res) {
   try {
     const { id } = req.params;
@@ -486,23 +417,8 @@ export async function updatePatient(req, res) {
     const { flat, dailyCharges, medicines, additionalCharges } =
       buildPatientData(req.body, { existingTotalPaid: existing.totalPaid });
 
-    // Kept to a minimal number of round-trips (3 deletes + 1 update + 1
-    // createMany) so the interactive transaction stays well inside its
-    // timeout. Previously additionalCharges was inserted via a for-loop of
-    // individual create() calls, which added one extra round-trip per charge
-    // and — combined with per-query latency — could push the whole
-    // transaction past Prisma's default 5s interactive-transaction timeout
-    // (P2028). If you're still seeing timeouts after this change, the DB
-    // connection itself has high per-query latency (e.g. a pooled/serverless
-    // Postgres) and is the thing to investigate next.
     await prisma.$transaction(
       async (tx) => {
-        // Apply the net stock change BEFORE the old medicine rows are wiped
-        // out below — `existing.medicines` (fetched above, pre-transaction)
-        // is the "before" picture, `medicines` is the "after" picture. Only
-        // the difference between the two moves stock, so unrelated edits
-        // (e.g. changing a daily charge) never re-deduct medicines that were
-        // already dispensed.
         await applyIpdMedicineStockChanges(tx, {
           previousMedicines: existing.medicines,
           newMedicines: medicines,
@@ -528,6 +444,7 @@ export async function updatePatient(req, res) {
           },
         });
 
+        // --- NEW FIELDS MAPPED HERE FOR UPDATES ---
         if (additionalCharges.length > 0) {
           await tx.iPD_AdditionalCharge.createMany({
             data: additionalCharges.map((charge) => ({
@@ -537,6 +454,9 @@ export async function updatePatient(req, res) {
               rate: Number(charge.rate),
               days: Number(charge.days),
               amount: Number(charge.amount),
+              amountPaid: Number(charge.amountPaid),
+              paymentDate: charge.paymentDate,
+              paymentStatus: charge.paymentStatus,
             })),
           });
         }
@@ -562,16 +482,6 @@ export async function updatePatient(req, res) {
   }
 }
 
-// PATCH /api/ipd/patients/:id/discharge
-// Dedicated, narrow endpoint for transitioning a patient's discharge state
-// — used by the "Discharge Patient" / "Undo Discharge" quick actions.
-//
-// Deliberately does NOT go through buildPatientData()/updatePatient: it
-// only ever touches dischargeStatus, status, dischargeDate, and
-// dischargeTime. It never recomputes or touches totalStay, totalPaid,
-// balance, settlementStatus, daily charges, medicines, or additional
-// charges — so marking someone discharged can never accidentally disturb
-// their billing figures or clinical records.
 export async function dischargePatient(req, res) {
   try {
     const { id } = req.params;
@@ -589,21 +499,19 @@ export async function dischargePatient(req, res) {
     const data = { dischargeStatus };
 
     if (dischargeStatus === "Admitted") {
-      // "Undo Discharge" — fully reverts the patient back to an active
-      // admission and clears the discharge record.
       data.status = "Admitted";
       data.dischargeDate = null;
       data.dischargeTime = null;
     } else {
-      // "Ready For Discharge" still counts as an occupied bed; only a
-      // full "Discharged" flips the coarse `status` field used elsewhere
-      // in the app (bed-occupancy counts, the Admitted/Discharged filter).
-      data.status = dischargeStatus === "Discharged" ? "Discharged" : "Admitted";
+      data.status =
+        dischargeStatus === "Discharged" ? "Discharged" : "Admitted";
 
       const rawDate = dischargeDate || patient.dischargeDate || new Date();
       const parsedDate = new Date(rawDate);
       if (Number.isNaN(parsedDate.getTime())) {
-        return res.status(400).json({ message: "dischargeDate is not a valid date" });
+        return res
+          .status(400)
+          .json({ message: "dischargeDate is not a valid date" });
       }
 
       const admissionMidnight = new Date(patient.admissionDate);
@@ -615,10 +523,6 @@ export async function dischargePatient(req, res) {
       }
 
       data.dischargeDate = parsedDate;
-      // "Take system timing" — the client only asks for a date; the actual
-      // discharge TIME is always the server's current clock time at the
-      // moment this request is processed, unless the caller explicitly
-      // sent one (e.g. correcting a past record from the edit form).
       data.dischargeTime =
         dischargeTime || new Date().toTimeString().slice(0, 5);
     }
@@ -638,19 +542,16 @@ export async function dischargePatient(req, res) {
   }
 }
 
-// DELETE /api/ipd/patients/:id
 export async function deletePatient(req, res) {
   try {
     const { id } = req.params;
 
-    // Clean up every document this patient has in R2 before cascade-deleting
-    // the DB rows, so nothing is ever left orphaned in the bucket.
     const docs = await prisma.iPD_Document.findMany({
       where: { patientId: id },
     });
     await deleteManyObjectsFromR2(docs.map((d) => d.key));
 
-    await prisma.iPD_Patient.delete({ where: { id } }); // cascades to related tables
+    await prisma.iPD_Patient.delete({ where: { id } });
     res.json({ message: "Patient deleted" });
   } catch (err) {
     if (err.code === "P2025")
@@ -662,7 +563,6 @@ export async function deletePatient(req, res) {
 
 // ---------- documents ----------
 
-// POST /api/ipd/patients/:id/documents  (multipart/form-data: file, type)
 export async function uploadDocument(req, res) {
   try {
     const { id } = req.params;
@@ -671,7 +571,6 @@ export async function uploadDocument(req, res) {
 
     if (!req.file) return res.status(400).json({ message: "No file uploaded" });
 
-    // Object key follows: IPD documents/{SerialNumber}-{PatientName}/{unique}-{filename}
     const key = buildDocumentKey(
       patient.serialNumber,
       patient.name,
@@ -703,7 +602,6 @@ export async function uploadDocument(req, res) {
   }
 }
 
-// DELETE /api/ipd/patients/:id/documents/:docId
 export async function deleteDocument(req, res) {
   try {
     const { docId } = req.params;

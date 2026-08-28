@@ -26,7 +26,7 @@
 //      (VPC-INV-PHARMACY-000001...), kept fully separate from OPD/IPD
 //      invoice history.
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   X,
@@ -54,7 +54,7 @@ import {
   markInvoiceReturn,
 } from "../api/invoice.api";
 
-// Same letterhead as InvoiceModal.jsx — edit both if the clinic details change.
+// Clinic details
 const CLINIC = {
   name: "Virupakshipuram Paralysis Centre",
   tagline: "Pharmacy Billing",
@@ -114,15 +114,26 @@ const RETURN_STATUS_META = {
   NONE: null,
   PARTIAL: {
     label: "Partially Returned",
-    className:
-      "bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900/30 text-amber-700 dark:text-amber-400",
+    className: "bg-amber-50 border-amber-200 text-amber-700",
   },
   FULL: {
     label: "Fully Returned",
-    className:
-      "bg-rose-50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/30 text-rose-600 dark:text-rose-400",
+    className: "bg-rose-50 border-rose-200 text-rose-600",
   },
 };
+
+// --- Fixed half-A4 print sizing --------------------------------------
+const MM_TO_PX = 96 / 25.4;
+const HALF_PAGE_HEIGHT_MM = 148.5;
+const HALF_PAGE_PAD_TOP_MM = 10;
+const HALF_PAGE_PAD_BOTTOM_MM = 8;
+const HALF_PAGE_CONTENT_HEIGHT_PX =
+  (HALF_PAGE_HEIGHT_MM - HALF_PAGE_PAD_TOP_MM - HALF_PAGE_PAD_BOTTOM_MM) *
+  MM_TO_PX;
+const PRINT_SAFETY_MARGIN = 0.93;
+const HALF_PAGE_PRINT_TARGET_PX =
+  HALF_PAGE_CONTENT_HEIGHT_PX * PRINT_SAFETY_MARGIN;
+const PRINT_MIN_SCALE = 0.55;
 
 export default function PharmacyInvoiceModal({
   onClose,
@@ -130,24 +141,15 @@ export default function PharmacyInvoiceModal({
 }) {
   const { user } = useAuth();
 
-  // Only roles that actually have OPD access can search the OPD patient
-  // directory — Admin/Pharmacy/Manager (and anyone else) may not have the
-  // OPD module assigned, and /opd/patients rejects them for it. Calling it
-  // anyway was tripping the app's session-expiry handling on the 401/403
-  // and force-logging the user out, which looked like a crash back to
-  // /login. Skip the call entirely for anyone without OPD access instead.
   const hasOpdAccess =
     user?.role === "receptionist" ||
     user?.role === "doctor" ||
     (user?.modules || []).includes("OPD");
 
-  // ---- Setup screen: existing patient search vs. walk-in entry ----
   const [chosenPatient, setChosenPatient] = useState(null);
-  const [setupTab, setSetupTab] = useState(
-    hasOpdAccess ? "existing" : "manual",
-  );
+  const [setupTab, setSetupTab] = useState("existing");
   const [allPatients, setAllPatients] = useState([]);
-  const [patientsLoading, setPatientsLoading] = useState(hasOpdAccess);
+  const [patientsLoading, setPatientsLoading] = useState(true);
   const [patientSearch, setPatientSearch] = useState("");
   const [manualForm, setManualForm] = useState({
     name: "",
@@ -159,11 +161,39 @@ export default function PharmacyInvoiceModal({
   const [manualFormError, setManualFormError] = useState("");
 
   useEffect(() => {
-    if (!hasOpdAccess) return;
-    api
-      .get("/opd/patients")
-      .then(({ patients: data }) => setAllPatients(data))
-      .catch(() => setAllPatients([]))
+    const requests = [
+      hasOpdAccess
+        ? api
+            .get("/opd/patients")
+            .then(({ patients }) =>
+              (patients || []).map((p) => ({ ...p, patientType: "OPD" })),
+            )
+            .catch((err) => {
+              console.error(
+                "Failed to load OPD patients for Pharmacy Billing:",
+                err,
+              );
+              return [];
+            })
+        : Promise.resolve([]),
+      api
+        .get("/ipd/patients?limit=1000")
+        .then(({ data }) =>
+          (data || []).map((p) => ({ ...p, patientType: "IPD" })),
+        )
+        .catch((err) => {
+          console.error(
+            "Failed to load IPD patients for Pharmacy Billing:",
+            err,
+          );
+          return [];
+        }),
+    ];
+
+    Promise.all(requests)
+      .then(([opdPatients, ipdPatients]) =>
+        setAllPatients([...opdPatients, ...ipdPatients]),
+      )
       .finally(() => setPatientsLoading(false));
   }, [hasOpdAccess]);
 
@@ -178,8 +208,6 @@ export default function PharmacyInvoiceModal({
       )
     : allPatients;
 
-  // Search results already carry everything the invoice header needs
-  // (name/age/gender/phone/place/serialNumber) — no extra fetch required.
   const selectExistingPatient = (p) => setChosenPatient(p);
 
   const submitManualPatient = () => {
@@ -204,7 +232,6 @@ export default function PharmacyInvoiceModal({
     setSavedInvoiceId(null);
   };
 
-  // ---- Medicine catalogue for the line-item autocomplete ----
   const [medicines, setMedicines] = useState([]);
   const [medicinesLoading, setMedicinesLoading] = useState(true);
   useEffect(() => {
@@ -215,7 +242,6 @@ export default function PharmacyInvoiceModal({
       .finally(() => setMedicinesLoading(false));
   }, []);
 
-  // Only one row's suggestion dropdown is open at a time.
   const [activeSearchRowId, setActiveSearchRowId] = useState(null);
   const suggestionsFor = (row) => {
     const q = row.description.trim().toLowerCase();
@@ -250,22 +276,16 @@ export default function PharmacyInvoiceModal({
   const [historyLoading, setHistoryLoading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
 
-  // ---- Returns (patient brings tablets back) ----
-  const [returnStatus, setReturnStatus] = useState("NONE"); // NONE | PARTIAL | FULL
+  const [returnStatus, setReturnStatus] = useState("NONE");
   const [returnedAt, setReturnedAt] = useState(null);
   const [returnedByDisplay, setReturnedByDisplay] = useState("");
   const [returnNotesSaved, setReturnNotesSaved] = useState("");
   const [showReturnPanel, setShowReturnPanel] = useState(false);
-  const [returnQtyByRow, setReturnQtyByRow] = useState({}); // { [rowId]: string }
+  const [returnQtyByRow, setReturnQtyByRow] = useState({});
   const [returnFormNotes, setReturnFormNotes] = useState("");
   const [returning, setReturning] = useState(false);
   const [returnError, setReturnError] = useState("");
 
-  // Runs once a patient is chosen (setup screen completed) — preps a fresh
-  // blank invoice and loads that patient's prior Pharmacy invoices, if any.
-  // Skipped when jumping straight into an existing invoice (invoiceToEdit)
-  // — that path populates everything itself via viewPastInvoice below, and
-  // this reset would otherwise immediately clobber it with a blank one.
   useEffect(() => {
     if (!chosenPatient?.id || chosenPatient.__skipReset) return;
     setLineItems([blankRow()]);
@@ -335,8 +355,9 @@ export default function PharmacyInvoiceModal({
     0,
   );
   const discountVal = Number(discount) || 0;
-  const gstVal =
-    Math.round((subtotal - discountVal) * (Number(gstPercent) || 0)) / 100;
+  const taxableVal =
+    (subtotal - discountVal) / (1 + (Number(gstPercent) || 0) / 100);
+  const gstVal = subtotal - discountVal - taxableVal;
   const grandTotal = Math.max(0, subtotal - discountVal + gstVal);
   const paidVal = Number(paid) || 0;
   const balance = Math.max(0, Math.round((grandTotal - paidVal) * 100) / 100);
@@ -375,10 +396,6 @@ export default function PharmacyInvoiceModal({
     setShowHistory(false);
   }
 
-  // Opened directly onto a specific invoice (e.g. "View" from the Pharmacy
-  // Billing list) — jump straight past the setup screen into the editor,
-  // preloaded with that invoice's details, instead of making the user
-  // re-pick the patient they already picked when they created it.
   useEffect(() => {
     if (!invoiceToEdit) return;
     const isRealPatient = !String(invoiceToEdit.patientId || "").startsWith(
@@ -406,6 +423,12 @@ export default function PharmacyInvoiceModal({
   }, []);
 
   function startNewInvoice() {
+    if (savedInvoiceId) {
+      const ok = window.confirm(
+        `You're currently editing invoice ${invoiceNumber}. Starting a new invoice will discard any unsaved changes on screen (the already-saved invoice itself is not affected). Continue?`,
+      );
+      if (!ok) return;
+    }
     setLineItems([blankRow()]);
     setDiscount(0);
     setGstPercent(0);
@@ -430,7 +453,50 @@ export default function PharmacyInvoiceModal({
     setShowHistory(false);
   }
 
+  const savingRef = useRef(false);
+
+  const printAreaRef = useRef(null);
+  const printContentRef = useRef(null);
+
+  const fitToHalfPage = useCallback(() => {
+    const content = printContentRef.current;
+    if (!content) return;
+    content.style.transform = "none";
+    content.style.width = "100%";
+    void content.offsetHeight;
+    const naturalHeight = content.scrollHeight;
+    const scale =
+      naturalHeight > 0
+        ? Math.max(
+            PRINT_MIN_SCALE,
+            Math.min(1, HALF_PAGE_PRINT_TARGET_PX / naturalHeight),
+          )
+        : 1;
+    content.style.transformOrigin = "top left";
+    content.style.transform = `scale(${scale})`;
+    content.style.width = `${100 / scale}%`;
+  }, []);
+
+  const resetScale = useCallback(() => {
+    const content = printContentRef.current;
+    if (!content) return;
+    content.style.transform = "";
+    content.style.width = "";
+    content.style.transformOrigin = "";
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("beforeprint", fitToHalfPage);
+    window.addEventListener("afterprint", resetScale);
+    return () => {
+      window.removeEventListener("beforeprint", fitToHalfPage);
+      window.removeEventListener("afterprint", resetScale);
+    };
+  }, [fitToHalfPage, resetScale]);
+
   async function handleSave() {
+    if (savingRef.current) return;
+    savingRef.current = true;
     setSaving(true);
     setSaveError("");
     try {
@@ -443,16 +509,10 @@ export default function PharmacyInvoiceModal({
           description,
           qty: Number(qty) || 0,
           rate: Number(rate) || 0,
-          amount: (Number(qty) || 0) * (Number(rate) || 0),
-          returnedQty: 0,
         })),
-        subtotal,
         discount: discountVal,
         gstPercent: Number(gstPercent) || 0,
-        gstAmount: gstVal,
-        grandTotal,
         paid: paidVal,
-        balance,
         paymentMethod,
         notes,
         createdById: user?.id || null,
@@ -463,6 +523,9 @@ export default function PharmacyInvoiceModal({
       setInvoiceNumber(saved.invoiceNumber);
       setInvoiceDate(saved.createdAt);
       setCreatedByDisplay(saved.createdByName || user?.fullName || "");
+      setDiscount(saved.discount);
+      setGstPercent(saved.gstPercent);
+      setPaid(saved.paid);
       if (!chosenPatient.__manual) {
         fetchPatientInvoices("PHARMACY", chosenPatient.id)
           .then((invs) => setHistory(invs))
@@ -471,37 +534,41 @@ export default function PharmacyInvoiceModal({
     } catch (err) {
       setSaveError(err.message || "Failed to save invoice");
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }
 
   async function handleUpdate() {
+    if (savingRef.current) return;
+    savingRef.current = true;
     setSaving(true);
     setSaveError("");
     try {
       const payload = {
-        lineItems: lineItems.map(
-          ({ medicineId, description, qty, rate, returnedQty }) => ({
-            medicineId: medicineId || null,
-            description,
-            qty: Number(qty) || 0,
-            rate: Number(rate) || 0,
-            amount: (Number(qty) || 0) * (Number(rate) || 0),
-            returnedQty: Number(returnedQty) || 0,
-          }),
-        ),
-        subtotal,
+        lineItems: lineItems.map(({ medicineId, description, qty, rate }) => ({
+          medicineId: medicineId || null,
+          description,
+          qty: Number(qty) || 0,
+          rate: Number(rate) || 0,
+        })),
         discount: discountVal,
         gstPercent: Number(gstPercent) || 0,
-        gstAmount: gstVal,
-        grandTotal,
         paid: paidVal,
-        balance,
         paymentMethod,
         notes,
       };
       const updated = await updateInvoice(savedInvoiceId, payload);
       setInvoiceDate(updated.createdAt);
+      setDiscount(updated.discount);
+      setGstPercent(updated.gstPercent);
+      setPaid(updated.paid);
+      setLineItems((rows) =>
+        rows.map((r, i) => ({
+          ...r,
+          returnedQty: Number(updated.lineItems?.[i]?.returnedQty) || 0,
+        })),
+      );
       if (!chosenPatient.__manual) {
         fetchPatientInvoices("PHARMACY", chosenPatient.id)
           .then((invs) => setHistory(invs))
@@ -510,12 +577,11 @@ export default function PharmacyInvoiceModal({
     } catch (err) {
       setSaveError(err.message || "Failed to update invoice");
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }
 
-  // How many units of this row are still eligible to be returned right now
-  // (sold − already returned). Only medicine-linked rows can be auto-restocked.
   const maxReturnableFor = (row) =>
     Math.max(0, (Number(row.qty) || 0) - (Number(row.returnedQty) || 0));
 
@@ -525,7 +591,6 @@ export default function PharmacyInvoiceModal({
 
   async function handleConfirmReturn() {
     setReturnError("");
-
     const items = lineItems
       .map((row, index) => ({
         index,
@@ -541,8 +606,6 @@ export default function PharmacyInvoiceModal({
       return;
     }
 
-    // Verify the counts one more time on the client before sending — the
-    // server re-verifies again against the saved invoice as the final check.
     for (const { row, returnQty } of items) {
       const max = maxReturnableFor(row);
       if (returnQty > max) {
@@ -560,7 +623,6 @@ export default function PharmacyInvoiceModal({
         notes: returnFormNotes,
       });
 
-      // Merge the server's authoritative returnedQty back onto our rows.
       const updatedLineItems = Array.isArray(updated.lineItems)
         ? updated.lineItems
         : [];
@@ -584,56 +646,60 @@ export default function PharmacyInvoiceModal({
     }
   }
 
-  const handlePrint = () => window.print();
+  const handlePrint = () => {
+    fitToHalfPage();
+    window.print();
+    resetScale();
+  };
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs invoice-modal-backdrop">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm invoice-modal-backdrop">
       <style>{`
         @media print {
-          /* @page margin: 0 removes the browser's own header/footer strip
-             (page title/URL up top, date-time-stamp + page number at the
-             bottom) — there's no margin box left for the browser to draw
-             them into. We add our own whitespace back via padding on
-             .invoice-print-area below, so the printed page still looks
-             properly framed. */
           @page { margin: 0; size: auto; }
           html, body { margin: 0 !important; padding: 0 !important; height: auto !important; background: #fff !important; }
+          body > *:not(.invoice-modal-backdrop) { display: none !important; }
+          .invoice-modal-backdrop {
+            position: fixed !important; inset: 0 !important;
+            margin: 0 !important; padding: 0 !important;
+            background: none !important; backdrop-filter: none !important;
+            display: block !important;
+          }
           body * { visibility: hidden; }
           .invoice-print-area, .invoice-print-area * { visibility: visible; }
           .invoice-print-area {
-            position: absolute; top: 0; left: 0; width: 100%; margin: 0;
+            position: absolute; top: 0; left: 0; width: 100% !important; max-width: 100% !important; margin: 0;
             padding: 10mm 12mm 8mm;
             box-shadow: none !important; border: none !important; max-height: none !important;
-            overflow: visible !important; border-radius: 0 !important;
-            /* Natural height (no forced 100vh) — a short invoice only
-               takes up as much of the page as its content needs, instead
-               of always stretching to fill/reserve a full page. */
-            height: auto !important;
+            border-radius: 0 !important;
+            height: 148.5mm !important;
+            box-sizing: border-box;
+            overflow: hidden !important;
+            background: #ffffff !important;
           }
           .no-print { display: none !important; }
+          /* Enforce removal of conditionally hidden items during print */
+          .print-hide { display: none !important; }
           .invoice-print-area input, .invoice-print-area select, .invoice-print-area textarea {
             border: none !important; background: transparent !important;
             padding: 0 !important; box-shadow: none !important; -webkit-appearance: none;
             appearance: none;
           }
-          /* Compact, uniform 12px print type across the whole invoice. */
-          .invoice-print-area, .invoice-print-area * { font-size: 12px !important; line-height: 1.4 !important; }
-          .invoice-print-area .invoice-clinic-name { font-size: 12px !important; }
-          .invoice-print-area .invoice-clinic-tagline { font-size: 9px !important; }
-          .invoice-print-area .invoice-badge { font-size: 9px !important; }
+          .invoice-print-area, .invoice-print-area * { font-size: 12px !important; line-height: 1.4 !important; color: #0f172a !important; }
         }
       `}</style>
 
       <div
-        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[28px] w-full max-w-3xl max-h-[92vh] overflow-y-auto shadow-2xl invoice-print-area"
+        ref={printAreaRef}
+        className="bg-white border border-slate-200 rounded-lg w-full max-w-3xl max-h-[92vh] overflow-y-auto shadow-2xl invoice-print-area"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between p-5 border-b border-slate-100 dark:border-slate-800 sticky top-0 bg-white dark:bg-slate-900 z-10 no-print">
+        <div className="flex items-center justify-between p-4 border-b border-slate-200 sticky top-0 bg-white z-10 no-print">
           <div>
-            <h3 className="font-extrabold text-slate-900 dark:text-white text-base">
+            <h3 className="font-extrabold text-slate-900 text-base">
               {chosenPatient ? "Pharmacy Invoice" : "Create Pharmacy Invoice"}
             </h3>
-            <p className="text-xs text-slate-400 font-medium">
+            <p className="text-xs text-slate-500 font-medium">
               {chosenPatient
                 ? "Medicine billing — review & edit before printing"
                 : "Pick an existing patient or enter walk-in customer details"}
@@ -645,14 +711,14 @@ export default function PharmacyInvoiceModal({
                 <button
                   onClick={backToSetup}
                   title="Choose a different patient"
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-extrabold"
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-slate-100 border border-slate-200 text-slate-600 text-xs font-bold"
                 >
                   <ArrowLeft className="w-4 h-4" />
                 </button>
                 <button
                   onClick={startNewInvoice}
                   title="Start a fresh invoice"
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-full bg-[#0f4a29] hover:bg-[#165a34] text-white text-xs font-extrabold"
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-[#047857] hover:bg-[#065f46] text-white text-xs font-bold"
                 >
                   <Plus className="w-4 h-4" />
                   New Invoice
@@ -660,7 +726,7 @@ export default function PharmacyInvoiceModal({
                 <button
                   onClick={() => setShowHistory((v) => !v)}
                   title="Past pharmacy invoices for this patient"
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-extrabold"
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-slate-100 border border-slate-200 text-slate-600 text-xs font-bold"
                 >
                   <History className="w-4 h-4" />
                   {showHistory ? "Hide" : "Show"} History
@@ -670,7 +736,7 @@ export default function PharmacyInvoiceModal({
                   <button
                     onClick={() => setShowReturnPanel((v) => !v)}
                     title="Record tablets returned by the patient"
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-full bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40 text-amber-700 dark:text-amber-400 text-xs font-extrabold"
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-700 text-xs font-bold"
                   >
                     <RotateCcw className="w-4 h-4" />
                     {showReturnPanel ? "Hide Return" : "Mark Return"}
@@ -680,7 +746,7 @@ export default function PharmacyInvoiceModal({
             )}
             <button
               onClick={onClose}
-              className="text-slate-400 hover:text-slate-600 transition-colors"
+              className="text-slate-400 hover:text-slate-600 transition-colors ml-2"
             >
               <X className="w-5 h-5" />
             </button>
@@ -688,40 +754,37 @@ export default function PharmacyInvoiceModal({
         </div>
 
         {chosenPatient && showReturnPanel && (
-          <div className="no-print mx-6 mt-4 bg-amber-50/60 dark:bg-amber-950/10 border border-amber-200/80 dark:border-amber-900/30 rounded-2xl p-4 space-y-3">
+          <div className="no-print mx-4 mt-4 bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-3">
             <div className="flex items-center gap-2">
-              <RotateCcw className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-              <h4 className="text-xs font-extrabold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+              <RotateCcw className="w-4 h-4 text-amber-600" />
+              <h4 className="text-xs font-extrabold uppercase tracking-wider text-amber-700">
                 Record a Return
               </h4>
             </div>
-            <p className="text-[11px] text-amber-700/80 dark:text-amber-400/70 font-medium leading-relaxed">
+            <p className="text-[11px] text-amber-700/80 font-medium leading-relaxed">
               Enter exactly how many tablets/strips the patient is physically
               returning for each medicine — double-check the count before
-              confirming. Only that quantity is added back to pharmacy stock.
-              A patient can return every tablet they bought or only some of
-              them; you can also record further returns later.
+              confirming.
             </p>
-
             <div className="space-y-2">
               {returnableRows.map((row) => {
                 const max = maxReturnableFor(row);
                 return (
                   <div
                     key={row.id}
-                    className="flex flex-wrap items-center justify-between gap-2 bg-white dark:bg-slate-900 border border-amber-100 dark:border-amber-900/30 rounded-xl px-3 py-2"
+                    className="flex flex-wrap items-center justify-between gap-2 bg-white border border-amber-100 rounded-md px-3 py-2"
                   >
                     <div className="min-w-0">
-                      <div className="text-xs font-extrabold text-slate-900 dark:text-white truncate">
+                      <div className="text-xs font-bold text-slate-900 truncate">
                         {row.description || "Medicine"}
                       </div>
-                      <div className="text-[10px] text-slate-400 font-medium">
+                      <div className="text-[10px] text-slate-500 font-medium">
                         Sold {row.qty}
                         {Number(row.returnedQty) > 0
                           ? ` · Already returned ${row.returnedQty}`
                           : ""}{" "}
                         · Max returnable now:{" "}
-                        <span className="font-extrabold text-amber-600 dark:text-amber-400">
+                        <span className="font-extrabold text-amber-600">
                           {max}
                         </span>
                       </div>
@@ -738,32 +801,29 @@ export default function PharmacyInvoiceModal({
                         }))
                       }
                       placeholder="0"
-                      className="w-24 bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs text-right font-bold focus:outline-none focus:border-amber-500"
+                      className="w-24 bg-transparent border border-slate-200 rounded px-2 py-1.5 text-xs text-right font-bold focus:outline-none focus:border-amber-500"
                     />
                   </div>
                 );
               })}
             </div>
-
             <div>
-              <label className="block text-[10px] font-extrabold uppercase tracking-wider text-amber-700/80 dark:text-amber-400/70 mb-1">
+              <label className="block text-[10px] font-extrabold uppercase tracking-wider text-amber-700/80 mb-1">
                 Return Notes (optional)
               </label>
               <input
                 value={returnFormNotes}
                 onChange={(e) => setReturnFormNotes(e.target.value)}
-                placeholder="e.g. Reason for return, condition of strips"
-                className="w-full bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-900/40 rounded-xl px-3 py-2 text-xs font-medium focus:outline-none focus:border-amber-500"
+                placeholder="e.g. Reason for return"
+                className="w-full bg-white border border-amber-200 rounded-md px-3 py-2 text-xs font-medium focus:outline-none focus:border-amber-500"
               />
             </div>
-
             {returnError && (
-              <div className="flex items-start gap-2 bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/30 rounded-xl px-3 py-2 text-rose-600 dark:text-rose-400 text-xs font-bold">
+              <div className="flex items-start gap-2 bg-rose-50 border border-rose-200 rounded-md px-3 py-2 text-rose-600 text-xs font-bold">
                 <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
                 {returnError}
               </div>
             )}
-
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => {
@@ -771,14 +831,14 @@ export default function PharmacyInvoiceModal({
                   setReturnQtyByRow({});
                   setReturnError("");
                 }}
-                className="px-4 py-2 rounded-full text-xs font-extrabold border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300"
+                className="px-4 py-2 rounded-md text-xs font-bold border border-slate-200 text-slate-600"
               >
                 Cancel
               </button>
               <button
                 onClick={handleConfirmReturn}
                 disabled={returning}
-                className="flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-extrabold px-5 py-2 rounded-full shadow-xs disabled:opacity-50"
+                className="flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-5 py-2 rounded-md disabled:opacity-50"
               >
                 <CheckCircle2 className="w-4 h-4" />
                 {returning ? "Confirming..." : "Confirm Return & Restock"}
@@ -789,49 +849,47 @@ export default function PharmacyInvoiceModal({
 
         {!chosenPatient ? (
           <div className="p-6 space-y-5">
-            {hasOpdAccess && (
-              <div className="flex gap-1.5 p-1 bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-800 rounded-full w-fit">
-                {[
-                  {
-                    key: "existing",
-                    label: "Existing Patient",
-                    icon: UserSearch,
-                  },
-                  { key: "manual", label: "New / Walk-in", icon: UserPlus2 },
-                ].map((t) => {
-                  const Icon = t.icon;
-                  const active = setupTab === t.key;
-                  return (
-                    <button
-                      key={t.key}
-                      onClick={() => setSetupTab(t.key)}
-                      className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-extrabold transition-all ${
-                        active
-                          ? "bg-[#0f4a29] text-white shadow-xs"
-                          : "text-slate-500 dark:text-slate-400 hover:text-slate-900"
-                      }`}
-                    >
-                      <Icon className="w-3.5 h-3.5" /> {t.label}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+            <div className="flex gap-1.5 p-1 bg-slate-50 border border-slate-200 rounded-md w-fit">
+              {[
+                {
+                  key: "existing",
+                  label: "Existing Patient",
+                  icon: UserSearch,
+                },
+                { key: "manual", label: "New / Walk-in", icon: UserPlus2 },
+              ].map((t) => {
+                const Icon = t.icon;
+                const active = setupTab === t.key;
+                return (
+                  <button
+                    key={t.key}
+                    onClick={() => setSetupTab(t.key)}
+                    className={`flex items-center gap-1.5 px-4 py-1.5 rounded text-xs font-bold transition-all ${
+                      active
+                        ? "bg-[#047857] text-white shadow-sm"
+                        : "text-slate-500 hover:text-slate-900"
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" /> {t.label}
+                  </button>
+                );
+              })}
+            </div>
 
-            {setupTab === "existing" && hasOpdAccess ? (
+            {setupTab === "existing" ? (
               <div className="space-y-3">
                 <div className="relative">
                   <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
                     value={patientSearch}
                     onChange={(e) => setPatientSearch(e.target.value)}
-                    placeholder="Search by name, token no., or phone..."
-                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-full pl-9 pr-4 py-2.5 text-xs font-medium text-slate-800 dark:text-white focus:outline-none focus:border-[#0f4a29]"
+                    placeholder="Search by name, token/IPD no., or phone..."
+                    className="w-full bg-white border border-slate-200 rounded-md pl-9 pr-4 py-2.5 text-xs font-medium text-slate-800 focus:outline-none focus:border-[#047857]"
                   />
                 </div>
                 {patientsLoading ? (
                   <div className="flex items-center justify-center py-10 text-xs font-bold text-slate-400">
-                    <Loader2 className="w-4 h-4 animate-spin text-[#0f4a29] mr-2" />
+                    <Loader2 className="w-4 h-4 animate-spin text-[#047857] mr-2" />
                     Loading patients...
                   </div>
                 ) : matchingPatients.length === 0 ? (
@@ -839,23 +897,28 @@ export default function PharmacyInvoiceModal({
                     No matching patients found.
                   </p>
                 ) : (
-                  <div className="divide-y divide-slate-100 dark:divide-slate-800 border border-slate-200 dark:border-slate-800 rounded-2xl max-h-72 overflow-y-auto">
+                  <div className="divide-y divide-slate-100 border border-slate-200 rounded-md max-h-72 overflow-y-auto">
                     {matchingPatients.slice(0, 50).map((p) => (
                       <button
-                        key={p.id}
+                        key={`${p.patientType}-${p.id}`}
                         onClick={() => selectExistingPatient(p)}
-                        className="w-full text-left p-3 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors flex items-center justify-between gap-3"
+                        className="w-full text-left p-3 hover:bg-slate-50 transition-colors flex items-center justify-between gap-3"
                       >
                         <div className="min-w-0">
-                          <p className="text-xs font-extrabold text-slate-900 dark:text-white truncate">
+                          <p className="text-xs font-bold text-slate-900 truncate flex items-center gap-1.5">
                             {p.name}
+                            <span
+                              className={`shrink-0 text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full border ${p.patientType === "IPD" ? "bg-violet-50 text-violet-700 border-violet-200" : "bg-blue-50 text-blue-700 border-blue-200"}`}
+                            >
+                              {p.patientType}
+                            </span>
                           </p>
-                          <p className="text-[10px] text-slate-400 font-medium">
+                          <p className="text-[10px] text-slate-500 font-medium">
                             #{p.serialNumber || "—"}
                             {p.phone ? ` · ${p.phone}` : ""}
                           </p>
                         </div>
-                        <span className="text-[10px] font-extrabold text-[#0f4a29] dark:text-[#52b788] shrink-0">
+                        <span className="text-[10px] font-bold text-[#047857] shrink-0">
                           Select →
                         </span>
                       </button>
@@ -865,20 +928,20 @@ export default function PharmacyInvoiceModal({
               </div>
             ) : (
               <div className="space-y-4">
-                <p className="text-xs text-slate-400 font-medium">
-                  For a walk-in customer who isn't in the OPD directory. These
-                  details are only used on this invoice — no patient record is
-                  created.
+                <p className="text-xs text-slate-500 font-medium">
+                  For a walk-in customer who isn't in the OPD/IPD directory.
+                  These details are only used on this invoice — no patient
+                  record is created.
                 </p>
                 {manualFormError && (
-                  <div className="bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/30 rounded-2xl px-4 py-3 text-rose-600 dark:text-rose-400 text-xs font-bold">
+                  <div className="bg-rose-50 border border-rose-200 rounded-md px-4 py-3 text-rose-600 text-xs font-bold">
                     {manualFormError}
                   </div>
                 )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-[11px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
-                      Customer Name
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                      Customer Name{" "}
                       <span className="text-rose-500 ml-0.5">*</span>
                     </label>
                     <input
@@ -887,11 +950,11 @@ export default function PharmacyInvoiceModal({
                         setManualForm((f) => ({ ...f, name: e.target.value }))
                       }
                       placeholder="Full name"
-                      className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 dark:text-white focus:outline-none focus:border-[#0f4a29]"
+                      className="w-full bg-white border border-slate-200 rounded-md px-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:border-[#047857]"
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
                       Age
                     </label>
                     <input
@@ -901,11 +964,11 @@ export default function PharmacyInvoiceModal({
                         setManualForm((f) => ({ ...f, age: e.target.value }))
                       }
                       placeholder="Age in years"
-                      className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 dark:text-white focus:outline-none focus:border-[#0f4a29]"
+                      className="w-full bg-white border border-slate-200 rounded-md px-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:border-[#047857]"
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
                       Gender
                     </label>
                     <select
@@ -913,7 +976,7 @@ export default function PharmacyInvoiceModal({
                       onChange={(e) =>
                         setManualForm((f) => ({ ...f, gender: e.target.value }))
                       }
-                      className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 dark:text-white focus:outline-none focus:border-[#0f4a29]"
+                      className="w-full bg-white border border-slate-200 rounded-md px-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:border-[#047857]"
                     >
                       <option value="">Select...</option>
                       <option value="Male">Male</option>
@@ -922,7 +985,7 @@ export default function PharmacyInvoiceModal({
                     </select>
                   </div>
                   <div>
-                    <label className="block text-[11px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
                       Phone
                     </label>
                     <input
@@ -931,11 +994,11 @@ export default function PharmacyInvoiceModal({
                         setManualForm((f) => ({ ...f, phone: e.target.value }))
                       }
                       placeholder="10-digit mobile"
-                      className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 dark:text-white focus:outline-none focus:border-[#0f4a29]"
+                      className="w-full bg-white border border-slate-200 rounded-md px-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:border-[#047857]"
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
                       Place
                     </label>
                     <input
@@ -944,14 +1007,14 @@ export default function PharmacyInvoiceModal({
                         setManualForm((f) => ({ ...f, place: e.target.value }))
                       }
                       placeholder="City / Town"
-                      className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 dark:text-white focus:outline-none focus:border-[#0f4a29]"
+                      className="w-full bg-white border border-slate-200 rounded-md px-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:border-[#047857]"
                     />
                   </div>
                 </div>
                 <div className="flex justify-end pt-2">
                   <button
                     onClick={submitManualPatient}
-                    className="flex items-center gap-1.5 bg-[#0f4a29] hover:bg-[#165a34] text-white text-xs font-extrabold px-6 py-2.5 rounded-full shadow-xs"
+                    className="flex items-center gap-1.5 bg-[#047857] hover:bg-[#065f46] text-white text-xs font-bold px-6 py-2.5 rounded-md shadow-sm"
                   >
                     Continue to Invoice →
                   </button>
@@ -962,16 +1025,16 @@ export default function PharmacyInvoiceModal({
         ) : (
           <>
             {showHistory && (
-              <div className="no-print mx-6 mt-4 bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 rounded-2xl p-4">
-                <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-2">
+              <div className="no-print mx-4 mt-4 bg-slate-50 border border-slate-200 rounded-md p-4">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
                   Previous Pharmacy Invoices
                 </h4>
                 {historyLoading ? (
-                  <p className="text-xs text-slate-400 font-medium">
+                  <p className="text-xs text-slate-500 font-medium">
                     Loading...
                   </p>
                 ) : history.length === 0 ? (
-                  <p className="text-xs text-slate-400 font-medium">
+                  <p className="text-xs text-slate-500 font-medium">
                     No pharmacy invoices generated yet for this patient.
                   </p>
                 ) : (
@@ -979,18 +1042,18 @@ export default function PharmacyInvoiceModal({
                     {history.map((inv) => (
                       <div
                         key={inv.id}
-                        className="flex items-center justify-between bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-xl px-3 py-2 text-xs"
+                        className="flex items-center justify-between bg-white border border-slate-200 rounded-md px-3 py-2 text-xs"
                       >
                         <div>
-                          <div className="font-extrabold text-slate-900 dark:text-white">
+                          <div className="font-bold text-slate-900">
                             {inv.invoiceNumber}
                           </div>
-                          <div className="text-slate-400 font-medium">
+                          <div className="text-slate-500 font-medium">
                             {fmtDateTime(inv.createdAt)} ·{" "}
                             {fmtINR(inv.grandTotal)}
                             {inv.createdByName && ` · by ${inv.createdByName}`}
                             {inv.balance > 0 && (
-                              <span className="text-rose-500 font-bold">
+                              <span className="text-rose-600 font-bold">
                                 {" "}
                                 · Balance {fmtINR(inv.balance)}
                               </span>
@@ -999,7 +1062,7 @@ export default function PharmacyInvoiceModal({
                         </div>
                         <button
                           onClick={() => viewPastInvoice(inv)}
-                          className="px-3 py-1 rounded-full bg-[#0f4a29] text-white font-extrabold"
+                          className="px-3 py-1 rounded-md bg-[#047857] text-white font-bold"
                         >
                           Edit
                         </button>
@@ -1010,36 +1073,42 @@ export default function PharmacyInvoiceModal({
               </div>
             )}
 
-            <div className="p-6 sm:p-8 space-y-6 text-slate-900 dark:text-white">
-              {/* Letterhead — accent bar + compact clinic name (12px) with an
-                  "INVOICE" tag on the side for a cleaner, less clinical look. */}
-              <div className="relative text-center pb-4 border-b-2 border-[#0f4a29] dark:border-[#52b788]">
-                <span className="invoice-badge no-print absolute right-0 top-0 text-[9px] font-extrabold tracking-[0.2em] uppercase text-white bg-[#0f4a29] px-2.5 py-1 rounded-full">
-                  Invoice
-                </span>
-                {CLINIC.logoUrl && (
-                  <img
-                    src={CLINIC.logoUrl}
-                    alt="Clinic logo"
-                    className="h-12 mx-auto mb-1.5 object-contain"
-                  />
-                )}
-                <h1
-                  className="invoice-clinic-name font-extrabold tracking-wide"
-                  style={{ fontSize: "12px" }}
-                >
-                  {CLINIC.name}
-                </h1>
-                {CLINIC.tagline && (
-                  <p className="invoice-clinic-tagline text-[10px] font-semibold text-slate-500 dark:text-slate-400 mt-0.5">
+            <div
+              ref={printContentRef}
+              // Force print removal of max-w constraints so the invoice utilizes full width during printing
+              className="p-4 sm:p-6 space-y-4 text-[#0f172a] bg-white w-full max-w-[720px] print:max-w-none mx-auto"
+            >
+              {/* Pharmacy Header & Letterhead */}
+              <div className="flex justify-between items-start pb-2 border-b-2 border-[#cbd5e1]">
+                <div>
+                  <h1 className="text-base font-black uppercase tracking-tight text-[#064e3b] flex items-center gap-1.5">
+                    {CLINIC.logoUrl && (
+                      <img
+                        src={CLINIC.logoUrl}
+                        alt="Clinic logo"
+                        className="h-6 w-6 object-contain shrink-0"
+                      />
+                    )}
+                    {CLINIC.name}
+                  </h1>
+                  <p className="text-[10px] text-slate-600 leading-tight max-w-[280px] mt-1">
+                    {CLINIC.footerAddress}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <span className="inline-block px-2 py-0.5 rounded font-black text-[9px] tracking-wider uppercase border bg-[#ecfdf5] text-[#047857] border-[#cbd5e1]">
+                    PHARMACY INVOICE
+                  </span>
+                  <p className="text-[9.5px] text-slate-600 font-mono mt-1 font-semibold">
                     {CLINIC.tagline}
                   </p>
-                )}
+                </div>
               </div>
 
+              {/* Status alerts */}
               {returnStatus !== "NONE" && (
                 <div
-                  className={`flex flex-wrap items-center justify-between gap-2 border rounded-2xl px-4 py-2 text-xs font-bold ${RETURN_STATUS_META[returnStatus]?.className || ""}`}
+                  className={`flex flex-wrap items-center justify-between gap-2 border rounded-md px-3 py-1.5 text-[10px] font-bold ${RETURN_STATUS_META[returnStatus]?.className || ""}`}
                 >
                   <span className="flex items-center gap-1.5">
                     <RotateCcw className="w-3.5 h-3.5" />
@@ -1054,116 +1123,79 @@ export default function PharmacyInvoiceModal({
                   )}
                 </div>
               )}
-
               {savedInvoiceId && (
-                <div className="no-print bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/30 rounded-2xl px-4 py-2 text-emerald-700 dark:text-emerald-400 text-xs font-bold">
-                  You're editing a saved invoice ({invoiceNumber}). Click
-                  "Update Invoice" to save your changes to this same record, or
-                  "New Invoice" to start a fresh one instead.
+                <div className="no-print bg-emerald-50 border border-emerald-200 rounded-md px-3 py-1.5 text-emerald-700 text-[10px] font-bold">
+                  Editing saved invoice ({invoiceNumber}).
                 </div>
               )}
               {saveError && (
-                <div className="no-print bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/30 rounded-2xl px-4 py-2 text-rose-600 dark:text-rose-400 text-xs font-bold">
+                <div className="no-print bg-rose-50 border border-rose-200 rounded-md px-3 py-1.5 text-rose-600 text-[10px] font-bold">
                   {saveError}
                 </div>
               )}
 
-              <div className="flex flex-wrap justify-between gap-3 text-xs font-medium">
+              {/* Patient & Bill Meta Ribbon */}
+              <div className="grid grid-cols-2 gap-2 my-2 p-1.5 rounded border text-[10.5px] bg-[#ecfdf5] border-[#cbd5e1]">
                 <div>
-                  <div className="text-slate-400 text-[10px] uppercase font-bold">
-                    Invoice No.
-                  </div>
-                  <div className="font-extrabold">{invoiceNumber || "—"}</div>
+                  <p>
+                    <strong>Patient:</strong>{" "}
+                    <span className="font-semibold">{chosenPatient.name}</span>
+                  </p>
+                  <p>
+                    <strong>Type:</strong>{" "}
+                    <span>
+                      {chosenPatient.__manual
+                        ? "Walk-in"
+                        : `OPD #${chosenPatient.serialNumber || "—"}`}
+                    </span>
+                  </p>
                 </div>
-                <div>
-                  <div className="text-slate-400 text-[10px] uppercase font-bold">
-                    Date
-                  </div>
-                  <div className="font-extrabold">{fmtDate(invoiceDate)}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-[10px] uppercase font-bold">
-                    Patient Type
-                  </div>
-                  <div className="font-extrabold">
-                    {chosenPatient.__manual
-                      ? "Walk-in"
-                      : `OPD #${chosenPatient.serialNumber || "—"}`}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-[10px] uppercase font-bold">
-                    Generated By
-                  </div>
-                  <div className="font-extrabold">
-                    {createdByDisplay || "—"}
-                  </div>
+                <div className="text-right font-mono text-[10px]">
+                  <p>
+                    <strong>Bill #:</strong>{" "}
+                    <span className="font-bold text-[#047857]">
+                      {invoiceNumber || "—"}
+                    </span>
+                  </p>
+                  <p>
+                    <strong>Date:</strong> <span>{fmtDate(invoiceDate)}</span>
+                  </p>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-medium border-y border-slate-100 dark:border-slate-800 py-4">
-                <div>
-                  <div className="text-slate-400 text-[10px] uppercase font-bold">
-                    Patient
-                  </div>
-                  <div className="font-extrabold">{chosenPatient.name}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-[10px] uppercase font-bold">
-                    Age
-                  </div>
-                  <div className="font-extrabold">
-                    {chosenPatient.age ? `${chosenPatient.age} yrs` : "—"}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-[10px] uppercase font-bold">
-                    Gender
-                  </div>
-                  <div className="font-extrabold">
-                    {chosenPatient.gender || "—"}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-[10px] uppercase font-bold">
-                    Phone
-                  </div>
-                  <div className="font-extrabold">
-                    {chosenPatient.phone || "—"}
-                  </div>
-                </div>
-              </div>
-
-              {/* Medicine line items — description field is a live
-                  autocomplete against the pharmacy catalogue. */}
-              <div>
-                <table className="w-full text-xs">
+              {/* Items Table */}
+              <div className="overflow-x-auto rounded border bg-white mb-2 border-[#cbd5e1]">
+                <table className="w-full text-left border-collapse text-[10.5px]">
                   <thead>
-                    <tr className="border-b-2 border-slate-800 dark:border-slate-200 text-left">
-                      <th className="py-2 pr-2 font-extrabold w-8">#</th>
-                      <th className="py-2 px-2 font-extrabold">Medicine</th>
-                      <th className="py-2 px-2 font-extrabold text-right w-20">
+                    <tr className="text-white font-bold uppercase text-[8.5px] tracking-wider bg-[#064e3b]">
+                      <th className="py-1 px-1.5 w-6 text-center border-r border-[#047857]">
+                        #
+                      </th>
+                      <th className="py-1 px-1.5 border-r border-[#047857]">
+                        Medicine Trade Description
+                      </th>
+                      <th className="py-1 px-1.5 text-center border-r border-[#047857] w-16">
                         Qty
                       </th>
-                      <th className="py-2 px-2 font-extrabold text-right w-24">
+                      <th className="py-1 px-1.5 text-right border-r border-[#047857] w-20">
                         Rate
                       </th>
-                      <th className="py-2 pl-2 font-extrabold text-right w-28">
-                        Amount
+                      <th className="py-1 px-1.5 text-right pr-2 w-24">
+                        Total
                       </th>
-                      <th className="w-8 no-print"></th>
+                      <th className="w-6 no-print bg-slate-100"></th>
                     </tr>
                   </thead>
                   <tbody>
                     {lineItems.map((r, i) => (
                       <tr
                         key={r.id}
-                        className="border-b border-slate-100 dark:border-slate-800"
+                        className="hover:bg-slate-50 transition border-b border-slate-200"
                       >
-                        <td className="py-1.5 pr-2 text-slate-400 align-top">
+                        <td className="py-1 px-1.5 text-center font-mono font-bold text-slate-500 text-[10px] align-top">
                           {i + 1}
                         </td>
-                        <td className="py-1.5 px-2 relative">
+                        <td className="py-1 px-1.5 font-medium relative align-top">
                           <input
                             value={r.description}
                             onChange={(e) => {
@@ -1181,21 +1213,19 @@ export default function PharmacyInvoiceModal({
                                 150,
                               )
                             }
-                            placeholder="Start typing a medicine name..."
-                            className="w-full bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-[#0f4a29]"
+                            placeholder="Type medicine..."
+                            className="w-full bg-transparent border border-slate-200 rounded px-1.5 py-0.5 text-[10.5px] focus:outline-none focus:border-[#047857]"
                           />
                           {activeSearchRowId === r.id &&
                             r.description.trim() && (
-                              <div className="no-print absolute z-20 left-2 right-2 mt-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg max-h-48 overflow-y-auto">
+                              <div className="no-print absolute z-20 left-0 mt-1 w-64 bg-white border border-slate-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
                                 {medicinesLoading ? (
-                                  <div className="px-3 py-2 text-[11px] text-slate-400 font-medium flex items-center gap-1.5">
-                                    <Loader2 className="w-3 h-3 animate-spin" />
-                                    Loading medicines...
+                                  <div className="px-3 py-2 text-[10px] text-slate-400 font-medium">
+                                    Loading...
                                   </div>
                                 ) : suggestionsFor(r).length === 0 ? (
-                                  <div className="px-3 py-2 text-[11px] text-slate-400 font-medium">
-                                    No matches — this will stay as a free-text
-                                    line item.
+                                  <div className="px-3 py-2 text-[10px] text-slate-400 font-medium">
+                                    No matches — will stay free-text.
                                   </div>
                                 ) : (
                                   suggestionsFor(r).map((med) => (
@@ -1206,14 +1236,13 @@ export default function PharmacyInvoiceModal({
                                       onClick={() =>
                                         selectMedicineForRow(r.id, med)
                                       }
-                                      className="w-full text-left px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                                      className="w-full text-left px-3 py-2 hover:bg-slate-50 transition-colors"
                                     >
-                                      <div className="font-extrabold text-slate-900 dark:text-white">
+                                      <div className="font-bold text-slate-900 text-[10px]">
                                         {med.drugName}
                                       </div>
-                                      <div className="text-[10px] text-slate-400 font-medium">
-                                        Batch {med.batchNumber} · {med.quantity}{" "}
-                                        in stock · ₹
+                                      <div className="text-[9px] text-slate-500 font-medium">
+                                        Batch {med.batchNumber} · ₹
                                         {(
                                           med.sellingPricePerTablet || 0
                                         ).toFixed(2)}
@@ -1225,164 +1254,177 @@ export default function PharmacyInvoiceModal({
                               </div>
                             )}
                         </td>
-                        <td className="py-1.5 px-2 align-top">
+                        <td className="py-1 px-1.5 text-center font-bold font-mono text-[11px] align-top">
                           <input
                             type="number"
                             value={r.qty}
                             onChange={(e) =>
                               updateRow(r.id, "qty", e.target.value)
                             }
-                            className="w-full bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-right focus:outline-none focus:border-[#0f4a29]"
+                            className="w-full bg-transparent border border-slate-200 rounded px-1.5 py-0.5 text-center text-[10.5px] focus:outline-none focus:border-[#047857]"
                           />
                         </td>
-                        <td className="py-1.5 px-2 align-top">
+                        <td className="py-1 px-1.5 text-right font-mono text-[10px] align-top">
                           <input
                             type="number"
                             value={r.rate}
                             onChange={(e) =>
                               updateRow(r.id, "rate", e.target.value)
                             }
-                            className="w-full bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-right focus:outline-none focus:border-[#0f4a29]"
+                            className="w-full bg-transparent border border-slate-200 rounded px-1.5 py-0.5 text-right text-[10.5px] focus:outline-none focus:border-[#047857]"
                           />
                         </td>
-                        <td className="py-1.5 pl-2 text-right font-extrabold align-top">
+                        <td className="py-1 px-1.5 text-right font-mono font-bold text-slate-900 text-[11px] pr-2 align-top">
                           {fmtINR((Number(r.qty) || 0) * (Number(r.rate) || 0))}
                           {Number(r.returnedQty) > 0 && (
-                            <div className="text-[9px] font-bold text-amber-600 dark:text-amber-400 normal-case">
-                              ↩ {r.returnedQty} returned
+                            <div className="text-[8px] font-bold text-amber-600 normal-case mt-0.5">
+                              ↩ {r.returnedQty} ret.
                             </div>
                           )}
                         </td>
-                        <td className="py-1.5 pl-1 no-print align-top">
+                        <td className="py-1 px-1 no-print align-top text-center">
                           <button
                             onClick={() => removeRow(r.id)}
-                            className="text-slate-300 hover:text-rose-500"
+                            className="text-slate-300 hover:text-rose-500 p-0.5"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Trash2 className="w-3 h-3" />
                           </button>
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-                <button
-                  onClick={addRow}
-                  className="no-print mt-2 flex items-center gap-1 text-[11px] font-extrabold text-[#0f4a29] dark:text-[#52b788]"
-                >
-                  <Plus className="w-3.5 h-3.5" /> Add Medicine Line
-                </button>
+                <div className="bg-white border-t border-slate-200 p-1 no-print">
+                  <button
+                    onClick={addRow}
+                    className="flex items-center gap-1 text-[10px] font-bold text-[#047857] px-2"
+                  >
+                    <Plus className="w-3 h-3" /> Add Item
+                  </button>
+                </div>
               </div>
 
-              <div className="flex justify-end">
-                <div className="w-full sm:w-72 space-y-1.5 text-xs font-medium bg-slate-50/70 dark:bg-slate-800/30 border border-slate-100 dark:border-slate-800 rounded-2xl p-4">
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Subtotal</span>
-                    <span className="font-extrabold">{fmtINR(subtotal)}</span>
+              {/* Summary & Net Total Grid */}
+              <div className="grid grid-cols-12 gap-3 pt-2 border-t border-[#cbd5e1] items-start">
+                <div className="col-span-6 text-[9.5px] font-mono text-slate-500 space-y-1">
+                  {/* Conditionally hide Tax/GST string on print if GST is empty or 0 */}
+                  <p
+                    className={
+                      Number(gstPercent) === 0 ? "print:hidden print-hide" : ""
+                    }
+                  >
+                    Taxable Value:{" "}
+                    <strong className="text-slate-700">
+                      {fmtINR(taxableVal)}
+                    </strong>{" "}
+                    | Total GST:{" "}
+                    <strong className="text-slate-700">{fmtINR(gstVal)}</strong>
+                  </p>
+                  <p>Terms: Medicines returnable within 7 days with bill.</p>
+
+                  <div className="pt-2 grid grid-cols-2 gap-2 text-xs font-sans pr-4">
+                    <div>
+                      <div className="text-slate-400 text-[9px] uppercase font-bold mb-0.5">
+                        Pay Mode
+                      </div>
+                      <select
+                        value={paymentMethod}
+                        onChange={(e) => setPaymentMethod(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px] focus:outline-none focus:border-[#047857]"
+                      >
+                        {PAYMENT_METHODS.map((m) => (
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <div className="text-slate-400 text-[9px] uppercase font-bold mb-0.5">
+                        Notes
+                      </div>
+                      <input
+                        value={notes}
+                        onChange={(e) => setNotes(e.target.value)}
+                        placeholder="Ref..."
+                        className="w-full bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px] focus:outline-none focus:border-[#047857]"
+                      />
+                    </div>
                   </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-400">Discount (₹)</span>
+                </div>
+
+                <div className="col-span-6 rounded p-2 font-mono text-[11px] bg-[#ecfdf5] border border-[#cbd5e1] space-y-1.5">
+                  <div className="flex justify-between items-center text-slate-600">
+                    <span>Gross Subtotal:</span>
+                    <span className="font-semibold text-slate-800">
+                      {fmtINR(subtotal)}
+                    </span>
+                  </div>
+
+                  {/* Conditionally hide Discount block on print if it's 0 */}
+                  <div
+                    className={`flex justify-between items-center text-[#047857] font-medium ${Number(discountVal) === 0 ? "print:hidden print-hide" : ""}`}
+                  >
+                    <span>Discount (₹):</span>
                     <input
                       type="number"
                       value={discount}
                       onChange={(e) => setDiscount(e.target.value)}
-                      className="w-24 bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-right focus:outline-none focus:border-[#0f4a29]"
+                      className="w-20 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-right focus:outline-none focus:border-[#047857]"
                     />
                   </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-400">GST (%)</span>
+
+                  {/* Conditionally hide GST block on print if it's 0 */}
+                  <div
+                    className={`flex justify-between items-center text-slate-600 font-medium ${Number(gstPercent) === 0 ? "print:hidden print-hide" : ""}`}
+                  >
+                    <span>GST (%):</span>
                     <input
                       type="number"
                       value={gstPercent}
                       onChange={(e) => setGstPercent(e.target.value)}
-                      className="w-24 bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-right focus:outline-none focus:border-[#0f4a29]"
+                      className="w-20 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-right focus:outline-none focus:border-[#047857]"
                     />
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">GST Amount</span>
-                    <span className="font-extrabold">{fmtINR(gstVal)}</span>
-                  </div>
-                  <div className="flex justify-between border-t-2 border-[#0f4a29] dark:border-[#52b788] pt-1.5 mt-1.5">
-                    <span className="font-extrabold">Grand Total</span>
-                    <span className="font-extrabold text-[#0f4a29] dark:text-[#52b788]">{fmtINR(grandTotal)}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-400">Paid</span>
+
+                  <div className="flex justify-between items-center text-slate-600 font-medium">
+                    <span>Paid (₹):</span>
                     <input
                       type="number"
                       value={paid}
                       onChange={(e) => setPaid(e.target.value)}
-                      className="w-24 bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-right focus:outline-none focus:border-[#0f4a29]"
+                      className="w-20 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-right focus:outline-none focus:border-[#047857]"
                     />
                   </div>
-                  <div className="flex justify-between">
-                    <span className="font-extrabold">Balance</span>
-                    <span
-                      className={`font-extrabold ${balance > 0 ? "text-rose-500" : "text-[#0f4a29] dark:text-[#52b788]"}`}
-                    >
-                      {fmtINR(balance)}
+                  <div className="pt-1.5 border-t border-[#cbd5e1] flex justify-between items-end font-black text-xs text-[#047857] font-sans">
+                    <span>NET PAYABLE:</span>
+                    <span className="font-mono text-sm">
+                      {fmtINR(grandTotal)}
                     </span>
                   </div>
+                  {balance > 0 && (
+                    <div className="flex justify-between items-end font-black text-[10px] text-rose-600 font-sans pt-0.5">
+                      <span>BALANCE:</span>
+                      <span className="font-mono text-xs">
+                        {fmtINR(balance)}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs font-medium border-t border-slate-100 dark:border-slate-800 pt-4">
-                <div>
-                  <div className="text-slate-400 text-[10px] uppercase font-bold mb-1">
-                    Payment Method
-                  </div>
-                  <select
-                    value={paymentMethod}
-                    onChange={(e) => setPaymentMethod(e.target.value)}
-                    className="w-full bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-[#0f4a29]"
-                  >
-                    {PAYMENT_METHODS.map((m) => (
-                      <option key={m} value={m}>
-                        {m}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-[10px] uppercase font-bold mb-1">
-                    Notes
-                  </div>
-                  <input
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    placeholder="e.g. Doctor / prescription reference"
-                    className="w-full bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-[#0f4a29]"
-                  />
-                </div>
-              </div>
-
-              <div className="flex justify-end pt-8">
-                <div className="text-center">
-                  <div className="w-40 border-t border-slate-400 dark:border-slate-600 pt-1 text-[11px] font-bold text-slate-500">
-                    Authorized Signature
-                  </div>
-                </div>
-              </div>
-
-              <div className="text-center border-t border-slate-200 dark:border-slate-800 pt-3">
-                <p className="text-[11px] font-extrabold text-slate-600 dark:text-slate-300">
-                  {CLINIC.footerName}
-                </p>
-                <p className="text-[10px] text-slate-400 max-w-xl mx-auto leading-snug">
-                  {CLINIC.footerAddress}
-                </p>
-              </div>
-
-              <div className="no-print flex flex-wrap justify-end gap-2 pt-2">
+              {/* Footer Controls */}
+              <div className="no-print flex flex-wrap justify-end gap-2 pt-4 border-t border-slate-200 mt-4">
                 <button
                   onClick={onClose}
-                  className="px-5 py-2.5 rounded-full text-xs font-extrabold border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300"
+                  className="px-5 py-2 rounded-md text-xs font-bold border border-slate-200 text-slate-600 bg-white"
                 >
                   Close
                 </button>
                 {savedInvoiceId && (
                   <button
                     onClick={startNewInvoice}
-                    className="px-5 py-2.5 rounded-full text-xs font-extrabold border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300"
+                    className="px-5 py-2 rounded-md text-xs font-bold border border-slate-200 text-slate-600 bg-white"
                   >
                     New Invoice
                   </button>
@@ -1390,7 +1432,7 @@ export default function PharmacyInvoiceModal({
                 <button
                   onClick={savedInvoiceId ? handleUpdate : handleSave}
                   disabled={saving}
-                  className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 dark:bg-slate-700 text-white text-xs font-extrabold px-5 py-2.5 rounded-full transition-all shadow-xs disabled:opacity-50"
+                  className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold px-5 py-2 rounded-md shadow-sm disabled:opacity-50"
                 >
                   <Save className="w-4 h-4" />
                   {saving
@@ -1401,9 +1443,9 @@ export default function PharmacyInvoiceModal({
                 </button>
                 <button
                   onClick={handlePrint}
-                  className="flex items-center gap-2 bg-[#0f4a29] hover:bg-[#165a34] text-white text-xs font-extrabold px-5 py-2.5 rounded-full transition-all shadow-xs"
+                  className="flex items-center gap-2 bg-[#047857] hover:bg-[#065f46] text-white text-xs font-bold px-5 py-2 rounded-md shadow-sm"
                 >
-                  <Printer className="w-4 h-4" /> Print / Save as PDF
+                  <Printer className="w-4 h-4" /> Print / PDF
                 </button>
               </div>
             </div>

@@ -74,7 +74,7 @@ const fmtDate = (d) =>
   d
     ? new Date(d).toLocaleDateString("en-IN", {
         day: "2-digit",
-        month: "short",
+        month: "2-digit",
         year: "numeric",
       })
     : "—";
@@ -83,7 +83,7 @@ const fmtDateTime = (d) =>
   d
     ? new Date(d).toLocaleString("en-IN", {
         day: "2-digit",
-        month: "short",
+        month: "2-digit",
         year: "numeric",
         hour: "2-digit",
         minute: "2-digit",
@@ -286,29 +286,65 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
           rate: c.rate || 0,
         });
       });
+
+      // --- Updated Additional Charges Logic ---
       (data.additionalCharges || []).forEach((c) => {
         const isPerDay = c.chargeType === "PER_DAY";
-        items.push({
-          id: nextRowId(),
-          description: isPerDay
-            ? `${c.label} (${c.days || 1} day${(c.days || 1) === 1 ? "" : "s"} × ₹${c.rate || 0})`
-            : c.label,
-          qty: isPerDay ? c.days || 1 : 1,
-          rate: c.rate || 0,
-        });
+        const grossAmount = isPerDay
+          ? (c.days || 1) * (c.rate || 0)
+          : c.rate || 0;
+        const paidAmt = parseFloat(c.amountPaid) || 0;
+        const pendingAmt = Math.max(0, grossAmount - paidAmt);
+        const dateStr = c.paymentDate ? fmtDate(c.paymentDate) : "";
+
+        let baseDesc = isPerDay
+          ? `${c.label} (${c.days || 1} day${(c.days || 1) === 1 ? "" : "s"} × ₹${c.rate || 0})`
+          : c.label;
+
+        // Fully Paid logic (shows the line, but bills 0 to not inflate Grand Total)
+        if (
+          c.paymentStatus === "Paid" ||
+          (paidAmt >= grossAmount && grossAmount > 0)
+        ) {
+          items.push({
+            id: nextRowId(),
+            description: `${baseDesc} - Fully Paid ₹${paidAmt}${dateStr && dateStr !== "—" ? ` on ${dateStr}` : ""}`,
+            qty: 1,
+            rate: 0,
+          });
+        }
+        // Partially Paid logic (shows the line, but ONLY bills the pending balance)
+        else if (
+          (c.paymentStatus === "Partial Paid" || paidAmt > 0) &&
+          pendingAmt > 0
+        ) {
+          items.push({
+            id: nextRowId(),
+            description: `${baseDesc} - Partial Paid ₹${paidAmt}${dateStr && dateStr !== "—" ? ` on ${dateStr}` : ""} (Pending Balance)`,
+            qty: 1,
+            rate: pendingAmt,
+          });
+        }
+        // Pending logic (bills normally)
+        else {
+          items.push({
+            id: nextRowId(),
+            description: baseDesc,
+            qty: isPerDay ? c.days || 1 : 1,
+            rate: c.rate || 0,
+          });
+        }
       });
+
       (data.medicines || []).forEach((m) => {
         items.push({
           id: nextRowId(),
           description: `${m.name}${m.dosage ? ` (${m.dosage})` : ""}`,
           qty: m.quantity || 1,
-          // Per-strip selling price from the linked pharmacy catalog entry
-          // (medicineId -> medicine.sellingPrice), same price Pharmacy
-          // Billing uses. Falls back to 0 (editable) for medicines that
-          // were entered as free text with no catalog link.
           rate: m.medicine?.sellingPrice || 0,
         });
       });
+
       setPaid(data.totalPaid || 0);
       setPaymentMethod(guessPaymentMethod(data, true));
       setNotes(
@@ -328,9 +364,6 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
           id: nextRowId(),
           description: `${pm.drugName}${pm.dosageInstructions ? ` (${pm.dosageInstructions})` : ""}`,
           qty: pm.quantity || 1,
-          // Per-strip selling price from the pharmacy catalog, same price
-          // Pharmacy Billing uses. Falls back to 0 (editable) if the
-          // medicine record was since removed from the catalog.
           rate: pm.sellingPrice || 0,
         });
       });
@@ -520,6 +553,8 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
             height: auto !important;
           }
           .no-print { display: none !important; }
+          /* Enforce removal of conditionally hidden items during print */
+          .print-hide { display: none !important; }
           .invoice-print-area input, .invoice-print-area select, .invoice-print-area textarea {
             border: none !important; background: transparent !important;
             padding: 0 !important; box-shadow: none !important; -webkit-appearance: none;
@@ -1027,7 +1062,10 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                     <span className="text-slate-400">Subtotal</span>
                     <span className="font-extrabold">{fmtINR(subtotal)}</span>
                   </div>
-                  <div className="flex justify-between items-center">
+
+                  <div
+                    className={`flex justify-between items-center ${Number(discountVal) === 0 ? "print:hidden print-hide" : ""}`}
+                  >
                     <span className="text-slate-400">Discount (₹)</span>
                     <input
                       type="number"
@@ -1036,7 +1074,10 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                       className="w-24 bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-right focus:outline-none focus:border-[#0f4a29]"
                     />
                   </div>
-                  <div className="flex justify-between items-center">
+
+                  <div
+                    className={`flex justify-between items-center ${Number(gstPercent) === 0 ? "print:hidden print-hide" : ""}`}
+                  >
                     <span className="text-slate-400">GST (%)</span>
                     <input
                       type="number"
@@ -1045,16 +1086,22 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                       className="w-24 bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-right focus:outline-none focus:border-[#0f4a29]"
                     />
                   </div>
-                  <div className="flex justify-between">
+
+                  <div
+                    className={`flex justify-between ${Number(gstVal) === 0 ? "print:hidden print-hide" : ""}`}
+                  >
                     <span className="text-slate-400">GST Amount</span>
                     <span className="font-extrabold">{fmtINR(gstVal)}</span>
                   </div>
+
                   <div className="flex justify-between border-t-2 border-[#0f4a29] dark:border-[#52b788] pt-1.5 mt-1.5">
                     <span className="font-extrabold">Grand Total</span>
-                    <span className="font-extrabold text-[#0f4a29] dark:text-[#52b788]">{fmtINR(grandTotal)}</span>
+                    <span className="font-extrabold text-[#0f4a29] dark:text-[#52b788]">
+                      {fmtINR(grandTotal)}
+                    </span>
                   </div>
                   <div className="flex justify-between items-center">
-                    <span className="text-slate-400">Paid</span>
+                    <span className="text-slate-400">Paid / Advances</span>
                     <input
                       type="number"
                       value={paid}

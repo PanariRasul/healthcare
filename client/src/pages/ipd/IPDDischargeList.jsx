@@ -35,7 +35,14 @@ import {
 
 const LATEST_DOCS_SHOWN = 3;
 
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString() : "—");
+const fmtDate = (d) =>
+  d
+    ? new Date(d).toLocaleDateString("en-IN", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+      })
+    : "—";
 const fmtMoney = (n) => `₹${(Number(n) || 0).toLocaleString("en-IN")}`;
 
 function DocumentsCell({ documents = [] }) {

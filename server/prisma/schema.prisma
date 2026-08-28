@@ -419,8 +419,16 @@ model StockHistory {
   action          StockAction
   quantity        Int
   reason          String
+  // Legacy single-unit entry (pre combined Strip+Tablet feature) — a stock
+  // update used to be entered in ONE unit only (e.g. "5 Strips" OR
+  // "3 Tablets"). Kept nullable so old rows keep displaying correctly.
   unit            StockUnit?
   enteredQuantity Int?
+  // Combined entry (current) — a single stock update can record a Strip
+  // count AND a loose Tablet count together (e.g. "2 Strips + 5 Tablets").
+  // Both nullable; a new row always has at least one of them set.
+  enteredStrips   Int?
+  enteredTablets  Int?
   createdAt       DateTime    @default(now())
   medicine        medicine    @relation(fields: [medicineId], references: [id], onDelete: Cascade)
 }

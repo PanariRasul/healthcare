@@ -98,9 +98,16 @@ export function fromDbStockHistory(h) {
     action: STOCK_ACTION_FROM_DB[h.action] || h.action,
     quantity: h.quantity,
     reason: h.reason,
-    // Original unit + amount the user actually typed (e.g. "5 Boxes").
-    // Both null for rows created before this feature existed — the
-    // frontend falls back to displaying the raw `quantity` in that case.
+    // Combined entry — Strips and/or Tablets the user actually typed for
+    // this update (e.g. "2 Strips + 5 Tablets"). Either can be null/0 if
+    // that part wasn't used; on any row created via the current Add Stock
+    // form at least one of these is set.
+    enteredStrips: h.enteredStrips ?? null,
+    enteredTablets: h.enteredTablets ?? null,
+    // Legacy single-unit amount the user typed (e.g. "5 Strips") — only
+    // present on rows created before the combined Strip+Tablet entry
+    // feature existed. The frontend falls back to this, then to the raw
+    // `quantity`, when enteredStrips/enteredTablets are both null.
     unit: fromDbStockUnit(h.unit),
     enteredQuantity: h.enteredQuantity ?? null,
   };

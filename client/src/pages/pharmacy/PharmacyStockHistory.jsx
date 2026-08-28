@@ -17,6 +17,29 @@ import {
 } from "lucide-react";
 import { api } from "../../lib/api";
 
+// Builds a readable "what was typed" string for a history row, e.g.
+// "+2 Strips + 5 Tablets". Prefers the current combined Strip+Tablet
+// fields; falls back to the legacy single-unit fields, then to the raw
+// tablet-count `quantity` for very old rows that predate both features.
+function formatEnteredQty(h) {
+  const sign = h.quantity > 0 ? "+" : h.quantity < 0 ? "-" : "";
+  const parts = [];
+  if (h.enteredStrips) {
+    parts.push(`${h.enteredStrips} Strip${h.enteredStrips === 1 ? "" : "s"}`);
+  }
+  if (h.enteredTablets) {
+    parts.push(
+      `${h.enteredTablets} Tablet${h.enteredTablets === 1 ? "" : "s"}`,
+    );
+  }
+  if (parts.length) return `${sign}${parts.join(" + ")}`;
+
+  if (h.unit && h.enteredQuantity) {
+    return `${sign}${h.enteredQuantity} ${h.unit}${h.enteredQuantity === 1 ? "" : "s"}`;
+  }
+  return h.quantity > 0 ? `+${h.quantity}` : `${h.quantity}`;
+}
+
 export default function PharmacyStockHistory() {
   const [medicines, setMedicines] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -168,14 +191,13 @@ export default function PharmacyStockHistory() {
                         : "text-rose-500"
                     }
                   >
-                    {h.unit && h.enteredQuantity
-                      ? `${h.quantity > 0 ? "+" : "-"}${h.enteredQuantity} ${h.unit}${
-                          h.enteredQuantity === 1 ? "" : "s"
-                        }`
-                      : h.quantity > 0
-                        ? `+${h.quantity}`
-                        : h.quantity}
+                    {formatEnteredQty(h)}
                   </span>
+                  <div className="text-slate-400 dark:text-slate-500 font-medium text-[10px]">
+                    {h.quantity > 0 ? "+" : ""}
+                    {h.quantity} tablet{Math.abs(h.quantity) === 1 ? "" : "s"}{" "}
+                    total
+                  </div>
                 </Td>
                 <Td className="text-slate-500 font-medium max-w-[200px] truncate">
                   {h.reason}

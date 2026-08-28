@@ -10,11 +10,8 @@ import {
   Plus,
   Minus,
   RefreshCw,
-  Loader2,
 } from "lucide-react";
 import { api } from "../../lib/api";
-
-const STOCK_UNIT_OPTIONS = ["Strip", "Tablet"];
 
 export default function PharmacyMedicineDetails({
   medicine: initMed,
@@ -23,13 +20,14 @@ export default function PharmacyMedicineDetails({
 }) {
   const [med, setMed] = useState(initMed);
   const [stockAction, setStockAction] = useState("");
-  const [stockUnit, setStockUnit] = useState("");
-  const [stockQty, setStockQty] = useState("");
+  const [stockStrips, setStockStrips] = useState("");
+  const [stockTablets, setStockTablets] = useState("");
   const [stockReason, setStockReason] = useState("");
   const [stockError, setStockError] = useState("");
   const [saving, setSaving] = useState(false);
 
   const status = getMedicineStatus(med);
+  const hasPacking = !!med.tabletsPerStrip;
 
   const ACTION_LABELS = {
     add: "Add Stock",
@@ -37,23 +35,24 @@ export default function PharmacyMedicineDetails({
     adjust: "Stock Adjustment",
   };
 
+  // Live preview of what the two fields above add up to, in tablets — same
+  // math the server applies, shown here so the user can see the total
+  // before confirming.
+  const previewStrips = parseInt(stockStrips) || 0;
+  const previewTablets = parseInt(stockTablets) || 0;
+  const previewTotalTablets =
+    previewStrips * (med.tabletsPerStrip || 1) + previewTablets;
+
   const handleStockUpdate = async () => {
-    const qty = parseInt(stockQty);
-    if (!qty || qty <= 0) {
-      setStockError("Enter a valid quantity.");
-      return;
-    }
-    if (!stockUnit) {
-      setStockError("Select a stock unit.");
+    if (previewStrips <= 0 && previewTablets <= 0) {
+      setStockError("Enter a quantity of Strips and/or Tablets.");
       return;
     }
     if (!stockReason.trim()) {
       setStockError("Enter a reason.");
       return;
     }
-    const multiplier = stockUnit === "Strip" ? med.tabletsPerStrip || 1 : 1;
-    const qtyInTablets = qty * multiplier;
-    if (stockAction === "reduce" && qtyInTablets > med.quantity) {
+    if (stockAction === "reduce" && previewTotalTablets > med.quantity) {
       setStockError("Cannot reduce more than current stock.");
       return;
     }
@@ -65,15 +64,15 @@ export default function PharmacyMedicineDetails({
         `/pharmacy/medicines/${med.id}/stock`,
         {
           action: ACTION_LABELS[stockAction],
-          quantity: qty,
-          unit: stockUnit,
+          strips: previewStrips,
+          tablets: previewTablets,
           reason: stockReason.trim(),
         },
       );
       setMed(updated);
       if (onUpdated) onUpdated(updated);
-      setStockQty("");
-      setStockUnit("");
+      setStockStrips("");
+      setStockTablets("");
       setStockReason("");
       setStockAction("");
     } catch (err) {
@@ -86,6 +85,14 @@ export default function PharmacyMedicineDetails({
   const expiryDiff = med.expiryDate
     ? Math.ceil((new Date(med.expiryDate) - new Date()) / (1000 * 60 * 60 * 24))
     : null;
+
+  const stockPercent =
+    med.initialQuantity > 0
+      ? Math.max(
+          0,
+          Math.min(100, Math.round((med.quantity / med.initialQuantity) * 100)),
+        )
+      : null;
 
   return (
     <div className="space-y-6 font-sans text-slate-900 bg-[#f4f5f7] dark:bg-slate-950 p-2 sm:p-4 rounded-3xl">
@@ -101,6 +108,10 @@ export default function PharmacyMedicineDetails({
           </button>
         }
       />
+
+      <div className="flex items-center gap-2 max-w-6xl">
+        <PharmacyStatusBadge status={status} />
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 max-w-6xl">
         <SectionCard title="Tablet Information" icon={Pill}>
@@ -216,7 +227,7 @@ export default function PharmacyMedicineDetails({
         </SectionCard>
 
         <SectionCard title="Strip / Tablet Breakdown" icon={Pill}>
-          <div className="grid grid-cols-2 gap-3 text-xs font-medium mb-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-medium mb-4">
             <div>
               <div className="text-slate-400 text-[10px] uppercase font-bold mb-0.5">
                 Tablets Per Strip
@@ -227,17 +238,33 @@ export default function PharmacyMedicineDetails({
             </div>
             <div>
               <div className="text-slate-400 text-[10px] uppercase font-bold mb-0.5">
+                Total Strips (Purchased)
+              </div>
+              <div className="text-slate-900 dark:text-white font-extrabold">
+                {med.totalStrips || 0}
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-400 text-[10px] uppercase font-bold mb-0.5">
                 Total Tablets (Auto)
               </div>
               <div className="text-slate-900 dark:text-white font-extrabold">
                 {med.totalTablets || 0}
               </div>
             </div>
+            <div>
+              <div className="text-slate-400 text-[10px] uppercase font-bold mb-0.5">
+                Initial Quantity
+              </div>
+              <div className="text-slate-900 dark:text-white font-extrabold">
+                {med.initialQuantity || 0} tab
+              </div>
+            </div>
           </div>
           <div className="text-[10px] font-bold uppercase text-slate-400 mb-2">
             Current / Available Stock
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3 mb-4">
             <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-3 border border-slate-100 dark:border-slate-800 text-center">
               <div className="text-[10px] font-bold uppercase text-slate-400">
                 Strips
@@ -255,6 +282,27 @@ export default function PharmacyMedicineDetails({
               </div>
             </div>
           </div>
+          {stockPercent !== null && (
+            <div>
+              <div className="flex justify-between text-[10px] font-bold uppercase text-slate-400 mb-1">
+                <span>Stock Remaining</span>
+                <span>
+                  {med.quantity} / {med.initialQuantity} tablets ({stockPercent}
+                  %)
+                </span>
+              </div>
+              <div className="h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-700 ${
+                    stockPercent <= 20
+                      ? "bg-rose-500"
+                      : "bg-[#0f4a29] dark:bg-[#52b788]"
+                  }`}
+                  style={{ width: `${stockPercent}%` }}
+                />
+              </div>
+            </div>
+          )}
         </SectionCard>
       </div>
 
@@ -273,7 +321,8 @@ export default function PharmacyMedicineDetails({
                 key={a.key}
                 onClick={() => {
                   setStockAction(active ? "" : a.key);
-                  setStockUnit("");
+                  setStockStrips("");
+                  setStockTablets("");
                   setStockError("");
                 }}
                 className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-extrabold border transition-all ${
@@ -292,53 +341,58 @@ export default function PharmacyMedicineDetails({
           <div className="bg-slate-50 dark:bg-slate-800/40 rounded-2xl p-4 border border-slate-100 dark:border-slate-800 space-y-3">
             <div>
               <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1.5">
-                Stock Unit
+                {stockAction === "adjust"
+                  ? "Set Stock To (Strips + Tablets can both be used)"
+                  : "Quantity — enter Strips and/or Tablets together"}
               </label>
-              <div className="flex flex-wrap gap-2">
-                {STOCK_UNIT_OPTIONS.map((u) => {
-                  const unitActive = stockUnit === u;
-                  return (
-                    <button
-                      key={u}
-                      type="button"
-                      onClick={() => {
-                        setStockUnit(u);
-                        setStockError("");
-                      }}
-                      className={`px-4 py-1.5 rounded-full text-xs font-extrabold border transition-all ${
-                        unitActive
-                          ? "bg-[#0f4a29] text-white border-[#0f4a29]"
-                          : "bg-white dark:bg-slate-800 text-slate-600 border-slate-200 dark:border-slate-700"
-                      }`}
-                    >
-                      {u}
-                    </button>
-                  );
-                })}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="relative">
+                  <input
+                    type="number"
+                    min="0"
+                    value={stockStrips}
+                    disabled={!hasPacking}
+                    onChange={(e) => {
+                      setStockStrips(e.target.value);
+                      setStockError("");
+                    }}
+                    placeholder={
+                      hasPacking ? "Strips" : "Strips (set Tablets/Strip first)"
+                    }
+                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 dark:text-white focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                </div>
+                <input
+                  type="number"
+                  min="0"
+                  value={stockTablets}
+                  onChange={(e) => {
+                    setStockTablets(e.target.value);
+                    setStockError("");
+                  }}
+                  placeholder="Tablets (loose)"
+                  className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 dark:text-white focus:outline-none"
+                />
               </div>
+              {(previewStrips > 0 || previewTablets > 0) && (
+                <p className="text-[10px] font-bold text-[#0f4a29] dark:text-[#52b788] mt-1.5">
+                  = {previewTotalTablets} tablet
+                  {previewTotalTablets === 1 ? "" : "s"} total
+                  {stockAction !== "adjust" &&
+                    ` (${stockAction === "add" ? "adding to" : "removing from"} current ${med.quantity})`}
+                </p>
+              )}
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <input
-                type="number"
-                value={stockQty}
-                onChange={(e) => {
-                  setStockQty(e.target.value);
-                  setStockError("");
-                }}
-                placeholder={`Quantity${stockUnit ? ` (${stockUnit}s)` : ""}`}
-                className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 dark:text-white focus:outline-none"
-              />
-              <input
-                type="text"
-                value={stockReason}
-                onChange={(e) => {
-                  setStockReason(e.target.value);
-                  setStockError("");
-                }}
-                placeholder="Reason (e.g. Dispensed / New Purchase)"
-                className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 dark:text-white focus:outline-none sm:col-span-2"
-              />
-            </div>
+            <input
+              type="text"
+              value={stockReason}
+              onChange={(e) => {
+                setStockReason(e.target.value);
+                setStockError("");
+              }}
+              placeholder="Reason (e.g. Dispensed / New Purchase)"
+              className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 dark:text-white focus:outline-none"
+            />
             {stockError && (
               <p className="text-rose-500 text-xs font-bold">{stockError}</p>
             )}

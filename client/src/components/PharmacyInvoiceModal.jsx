@@ -100,6 +100,7 @@ let rowSeq = 0;
 const nextRowId = () => `prow-${Date.now()}-${rowSeq++}`;
 let manualSeq = 0;
 const nextManualId = () => `manual-${Date.now()}-${manualSeq++}`;
+
 const blankRow = () => ({
   id: nextRowId(),
   medicineId: null,
@@ -107,6 +108,7 @@ const blankRow = () => ({
   qty: 1,
   rate: 0,
   returnedQty: 0,
+  maxStock: undefined,
 });
 
 // NONE / PARTIAL / FULL -> badge label + color classes for the return status pill.
@@ -258,7 +260,6 @@ export default function PharmacyInvoiceModal({
 
   const [lineItems, setLineItems] = useState([blankRow()]);
   const [discount, setDiscount] = useState(0);
-  const [gstPercent, setGstPercent] = useState(0);
   const [paid, setPaid] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState("Cash");
   const [notes, setNotes] = useState("");
@@ -290,7 +291,6 @@ export default function PharmacyInvoiceModal({
     if (!chosenPatient?.id || chosenPatient.__skipReset) return;
     setLineItems([blankRow()]);
     setDiscount(0);
-    setGstPercent(0);
     setPaid(0);
     setPaymentMethod("Cash");
     setNotes("");
@@ -339,6 +339,7 @@ export default function PharmacyInvoiceModal({
               medicineId: med.id,
               description: `${med.drugName}${med.batchNumber ? ` (Batch ${med.batchNumber})` : ""}`,
               rate: Number((med.sellingPricePerTablet || 0).toFixed(2)),
+              maxStock: med.quantity, // Save the stock limit
             }
           : r,
       ),
@@ -355,10 +356,8 @@ export default function PharmacyInvoiceModal({
     0,
   );
   const discountVal = Number(discount) || 0;
-  const taxableVal =
-    (subtotal - discountVal) / (1 + (Number(gstPercent) || 0) / 100);
-  const gstVal = subtotal - discountVal - taxableVal;
-  const grandTotal = Math.max(0, subtotal - discountVal + gstVal);
+  // GST completely removed from calculation
+  const grandTotal = Math.max(0, subtotal - discountVal);
   const paidVal = Number(paid) || 0;
   const balance = Math.max(0, Math.round((grandTotal - paidVal) * 100) / 100);
 
@@ -373,11 +372,11 @@ export default function PharmacyInvoiceModal({
             qty: it.qty,
             rate: it.rate,
             returnedQty: Number(it.returnedQty) || 0,
+            maxStock: undefined,
           }))
         : [blankRow()],
     );
     setDiscount(inv.discount || 0);
-    setGstPercent(inv.gstPercent || 0);
     setPaid(inv.paid || 0);
     setPaymentMethod(inv.paymentMethod || "Cash");
     setNotes(inv.notes || "");
@@ -431,7 +430,6 @@ export default function PharmacyInvoiceModal({
     }
     setLineItems([blankRow()]);
     setDiscount(0);
-    setGstPercent(0);
     setPaid(0);
     setPaymentMethod("Cash");
     setNotes("");
@@ -511,7 +509,7 @@ export default function PharmacyInvoiceModal({
           rate: Number(rate) || 0,
         })),
         discount: discountVal,
-        gstPercent: Number(gstPercent) || 0,
+        gstPercent: 0, // Set to 0 since GST is removed
         paid: paidVal,
         paymentMethod,
         notes,
@@ -524,7 +522,6 @@ export default function PharmacyInvoiceModal({
       setInvoiceDate(saved.createdAt);
       setCreatedByDisplay(saved.createdByName || user?.fullName || "");
       setDiscount(saved.discount);
-      setGstPercent(saved.gstPercent);
       setPaid(saved.paid);
       if (!chosenPatient.__manual) {
         fetchPatientInvoices("PHARMACY", chosenPatient.id)
@@ -553,7 +550,7 @@ export default function PharmacyInvoiceModal({
           rate: Number(rate) || 0,
         })),
         discount: discountVal,
-        gstPercent: Number(gstPercent) || 0,
+        gstPercent: 0, // Set to 0 since GST is removed
         paid: paidVal,
         paymentMethod,
         notes,
@@ -561,7 +558,6 @@ export default function PharmacyInvoiceModal({
       const updated = await updateInvoice(savedInvoiceId, payload);
       setInvoiceDate(updated.createdAt);
       setDiscount(updated.discount);
-      setGstPercent(updated.gstPercent);
       setPaid(updated.paid);
       setLineItems((rows) =>
         rows.map((r, i) => ({
@@ -678,7 +674,6 @@ export default function PharmacyInvoiceModal({
             background: #ffffff !important;
           }
           .no-print { display: none !important; }
-          /* Enforce removal of conditionally hidden items during print */
           .print-hide { display: none !important; }
           .invoice-print-area input, .invoice-print-area select, .invoice-print-area textarea {
             border: none !important; background: transparent !important;
@@ -1102,6 +1097,9 @@ export default function PharmacyInvoiceModal({
                   <p className="text-[9.5px] text-slate-600 font-mono mt-1 font-semibold">
                     {CLINIC.tagline}
                   </p>
+                  <p className="text-[9.5px] text-slate-600 font-mono font-semibold">
+                    GSTIN: 29ABBFV4474H1ZS
+                  </p>
                 </div>
               </div>
 
@@ -1164,7 +1162,7 @@ export default function PharmacyInvoiceModal({
               </div>
 
               {/* Items Table */}
-              <div className="overflow-x-auto rounded border bg-white mb-2 border-[#cbd5e1]">
+              <div className="rounded border bg-white mb-2 border-[#cbd5e1] overflow-visible">
                 <table className="w-full text-left border-collapse text-[10.5px]">
                   <thead>
                     <tr className="text-white font-bold uppercase text-[8.5px] tracking-wider bg-[#064e3b]">
@@ -1228,28 +1226,45 @@ export default function PharmacyInvoiceModal({
                                     No matches — will stay free-text.
                                   </div>
                                 ) : (
-                                  suggestionsFor(r).map((med) => (
-                                    <button
-                                      key={med.id}
-                                      type="button"
-                                      onMouseDown={(e) => e.preventDefault()}
-                                      onClick={() =>
-                                        selectMedicineForRow(r.id, med)
-                                      }
-                                      className="w-full text-left px-3 py-2 hover:bg-slate-50 transition-colors"
-                                    >
-                                      <div className="font-bold text-slate-900 text-[10px]">
-                                        {med.drugName}
-                                      </div>
-                                      <div className="text-[9px] text-slate-500 font-medium">
-                                        Batch {med.batchNumber} · ₹
-                                        {(
-                                          med.sellingPricePerTablet || 0
-                                        ).toFixed(2)}
-                                        /tab
-                                      </div>
-                                    </button>
-                                  ))
+                                  suggestionsFor(r).map((med) => {
+                                    const isOOS = med.quantity <= 0;
+                                    return (
+                                      <button
+                                        key={med.id}
+                                        type="button"
+                                        disabled={isOOS}
+                                        onMouseDown={(e) => e.preventDefault()}
+                                        onClick={() =>
+                                          selectMedicineForRow(r.id, med)
+                                        }
+                                        className={`w-full text-left px-3 py-2 transition-colors ${
+                                          isOOS
+                                            ? "opacity-50 cursor-not-allowed bg-rose-50"
+                                            : "hover:bg-slate-50"
+                                        }`}
+                                      >
+                                        <div className="flex justify-between items-start">
+                                          <div className="font-bold text-slate-900 text-[10px]">
+                                            {med.drugName}
+                                          </div>
+                                          {isOOS && (
+                                            <span className="text-[9px] font-bold text-rose-600 bg-rose-100 px-1.5 py-0.5 rounded">
+                                              Out of Stock
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div className="text-[9px] text-slate-500 font-medium mt-0.5">
+                                          Batch {med.batchNumber} · ₹
+                                          {(
+                                            med.sellingPricePerTablet || 0
+                                          ).toFixed(2)}
+                                          /tab
+                                          {!isOOS &&
+                                            ` · ${med.quantity} in stock`}
+                                        </div>
+                                      </button>
+                                    );
+                                  })
                                 )}
                               </div>
                             )}
@@ -1261,8 +1276,17 @@ export default function PharmacyInvoiceModal({
                             onChange={(e) =>
                               updateRow(r.id, "qty", e.target.value)
                             }
-                            className="w-full bg-transparent border border-slate-200 rounded px-1.5 py-0.5 text-center text-[10.5px] focus:outline-none focus:border-[#047857]"
+                            className={`w-full bg-transparent border rounded px-1.5 py-0.5 text-center text-[10.5px] focus:outline-none ${
+                              r.maxStock !== undefined && r.qty > r.maxStock
+                                ? "border-rose-500 text-rose-600"
+                                : "border-slate-200 focus:border-[#047857]"
+                            }`}
                           />
+                          {r.maxStock !== undefined && r.qty > r.maxStock && (
+                            <div className="text-[8px] text-rose-500 normal-case leading-tight mt-0.5 whitespace-nowrap">
+                              Max: {r.maxStock}
+                            </div>
+                          )}
                         </td>
                         <td className="py-1 px-1.5 text-right font-mono text-[10px] align-top">
                           <input
@@ -1307,19 +1331,6 @@ export default function PharmacyInvoiceModal({
               {/* Summary & Net Total Grid */}
               <div className="grid grid-cols-12 gap-3 pt-2 border-t border-[#cbd5e1] items-start">
                 <div className="col-span-6 text-[9.5px] font-mono text-slate-500 space-y-1">
-                  {/* Conditionally hide Tax/GST string on print if GST is empty or 0 */}
-                  <p
-                    className={
-                      Number(gstPercent) === 0 ? "print:hidden print-hide" : ""
-                    }
-                  >
-                    Taxable Value:{" "}
-                    <strong className="text-slate-700">
-                      {fmtINR(taxableVal)}
-                    </strong>{" "}
-                    | Total GST:{" "}
-                    <strong className="text-slate-700">{fmtINR(gstVal)}</strong>
-                  </p>
                   <p>Terms: Medicines returnable within 7 days with bill.</p>
 
                   <div className="pt-2 grid grid-cols-2 gap-2 text-xs font-sans pr-4">
@@ -1374,19 +1385,6 @@ export default function PharmacyInvoiceModal({
                     />
                   </div>
 
-                  {/* Conditionally hide GST block on print if it's 0 */}
-                  <div
-                    className={`flex justify-between items-center text-slate-600 font-medium ${Number(gstPercent) === 0 ? "print:hidden print-hide" : ""}`}
-                  >
-                    <span>GST (%):</span>
-                    <input
-                      type="number"
-                      value={gstPercent}
-                      onChange={(e) => setGstPercent(e.target.value)}
-                      className="w-20 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-right focus:outline-none focus:border-[#047857]"
-                    />
-                  </div>
-
                   <div className="flex justify-between items-center text-slate-600 font-medium">
                     <span>Paid (₹):</span>
                     <input
@@ -1432,7 +1430,7 @@ export default function PharmacyInvoiceModal({
                 <button
                   onClick={savedInvoiceId ? handleUpdate : handleSave}
                   disabled={saving}
-                  className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold px-5 py-2 rounded-md shadow-sm disabled:opacity-50"
+                  className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-extrabold px-5 py-2.5 rounded-full transition-all shadow-xs disabled:opacity-50"
                 >
                   <Save className="w-4 h-4" />
                   {saving
@@ -1443,7 +1441,7 @@ export default function PharmacyInvoiceModal({
                 </button>
                 <button
                   onClick={handlePrint}
-                  className="flex items-center gap-2 bg-[#047857] hover:bg-[#065f46] text-white text-xs font-bold px-5 py-2 rounded-md shadow-sm"
+                  className="flex items-center gap-2 bg-[#047857] hover:bg-[#065f46] text-white text-xs font-extrabold px-5 py-2.5 rounded-full transition-all shadow-xs"
                 >
                   <Printer className="w-4 h-4" /> Print / PDF
                 </button>

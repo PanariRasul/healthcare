@@ -16,7 +16,6 @@ import {
   Pencil,
   Clock,
   Wallet,
-  Pill,
   Bell,
   Utensils,
   FileText,
@@ -26,7 +25,14 @@ import {
 const docTypes = ["Prescription", "Lab Report", "Scan Report", "Hospital Bill"];
 
 // ---- small display helpers ----
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString() : "—");
+const fmtDate = (d) =>
+  d
+    ? new Date(d).toLocaleDateString("en-IN", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+      })
+    : "—";
 const fmtMoney = (n) => `₹${(Number(n) || 0).toLocaleString()}`;
 const dash = (v) => (v === null || v === undefined || v === "" ? "—" : v);
 
@@ -78,9 +84,7 @@ function DischargeToggle({ discharged, onClick }) {
     >
       <DoorOpen
         className={`w-4 h-4 ${
-          discharged
-            ? "text-[#0f4a29] dark:text-[#52b788]"
-            : "text-slate-400"
+          discharged ? "text-[#0f4a29] dark:text-[#52b788]" : "text-slate-400"
         }`}
       />
       <span className="text-slate-700 dark:text-slate-300">
@@ -150,26 +154,50 @@ export default function IPDPatientDetails({
   const handleDischargeModalClosed = async (didChange) => {
     setDischarging(false);
     if (!didChange) return;
-    // Refresh this page's copy of the patient in place — no navigation —
-    // so the Discharged badge, dates, and toggle update immediately.
     setRefreshing(true);
     try {
       const fresh = await fetchPatient(p.id);
       setP(fresh);
     } catch (err) {
-      setError(err.message || "Discharge saved, but the page failed to refresh.");
+      setError(
+        err.message || "Discharge saved, but the page failed to refresh.",
+      );
     } finally {
       setRefreshing(false);
     }
   };
 
-  const isImage = (ft) => ft && ft.startsWith("image");
-
   const dailyCharges = p.dailyCharges || [];
   const additionalCharges = p.additionalCharges || [];
-  const medicines = p.medicines || [];
   const hasFollowUp =
     p.followUpDate || p.condition || p.followUpDesc || p.reminderEnabled;
+
+  // --- Financial Computations ---
+  const totalStay = dailyCharges.reduce(
+    (s, c) => s + (parseFloat(c.amount) || 0),
+    0,
+  );
+
+  const additionalChargesGross = additionalCharges.reduce(
+    (s, c) => s + (parseFloat(c.amount) || 0),
+    0,
+  );
+
+  const additionalChargesPaid = additionalCharges.reduce(
+    (s, c) => s + (parseFloat(c.amountPaid) || 0),
+    0,
+  );
+
+  const additionalChargesNet = Math.max(
+    0,
+    additionalChargesGross - additionalChargesPaid,
+  );
+
+  const grandGrossTotal = totalStay + additionalChargesGross;
+  // Use DB totalPaid which natively tracks actual Payments Ledger via Modal
+  const basePaid = parseFloat(p.totalPaid) || 0;
+  const totalPaymentsOverall = basePaid + additionalChargesPaid;
+  const estimatedBalance = grandGrossTotal - totalPaymentsOverall;
 
   return (
     <div className="space-y-6 font-sans text-slate-900 bg-[#f4f5f7] dark:bg-slate-950 p-2 sm:p-4 rounded-3xl">
@@ -241,7 +269,7 @@ export default function IPDPatientDetails({
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 max-w-6xl">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         <SectionCard title="Personal Information" icon={User}>
           <InfoGrid
             items={[
@@ -312,22 +340,6 @@ export default function IPDPatientDetails({
           </SectionCard>
         )}
 
-        <SectionCard title="Payment Information" icon={CreditCard}>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            <StatTile label="Deposit" val={fmtMoney(p.deposit)} />
-            <StatTile label="Cash" val={fmtMoney(p.cash)} />
-            <StatTile label="UPI" val={fmtMoney(p.upi)} />
-            <StatTile label="Card" val={fmtMoney(p.card)} />
-            <StatTile label="Total Paid" val={fmtMoney(p.totalPaid)} />
-            <StatTile label="Total Stay" val={fmtMoney(p.totalStay)} />
-            <StatTile label="Balance" val={fmtMoney(p.balance)} />
-            <StatTile
-              label="Settlement"
-              val={<StatusBadge status={p.settlementStatus} />}
-            />
-          </div>
-        </SectionCard>
-
         <SectionCard title="Diet & Supplements" icon={Utensils}>
           <div className="grid grid-cols-3 gap-3">
             <StatTile label="Oil" val={dash(p.oil)} />
@@ -346,13 +358,21 @@ export default function IPDPatientDetails({
               {dailyCharges.map((c) => (
                 <div
                   key={c.id}
-                  className="grid grid-cols-4 gap-2 items-center bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-slate-800 p-3 text-xs font-medium"
+                  className="grid grid-cols-5 gap-2 items-center bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-slate-800 p-3 text-xs font-medium"
                 >
                   <div>
                     <div className="text-slate-400 text-[10px] uppercase font-bold">
-                      Date
+                      From Date
                     </div>
-                    <div className="font-extrabold">{fmtDate(c.date)}</div>
+                    <div className="font-extrabold">
+                      {fmtDate(c.date || c.fromDate)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-slate-400 text-[10px] uppercase font-bold">
+                      To Date
+                    </div>
+                    <div className="font-extrabold">{fmtDate(c.toDate)}</div>
                   </div>
                   <div>
                     <div className="text-slate-400 text-[10px] uppercase font-bold">
@@ -366,7 +386,7 @@ export default function IPDPatientDetails({
                     </div>
                     <div className="font-extrabold">{fmtMoney(c.rate)}</div>
                   </div>
-                  <div>
+                  <div className="text-right">
                     <div className="text-slate-400 text-[10px] uppercase font-bold">
                       Amount
                     </div>
@@ -380,9 +400,7 @@ export default function IPDPatientDetails({
                 <div className="text-xs font-bold text-slate-500">
                   Room Charges Total:{" "}
                   <span className="text-sm font-extrabold text-slate-900 dark:text-white">
-                    {fmtMoney(
-                      dailyCharges.reduce((s, c) => s + (c.amount || 0), 0),
-                    )}
+                    {fmtMoney(totalStay)}
                   </span>
                 </div>
               </div>
@@ -396,52 +414,105 @@ export default function IPDPatientDetails({
               No additional charges recorded.
             </p>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-4">
               {additionalCharges.map((c) => (
                 <div
                   key={c.id}
-                  className="grid grid-cols-4 gap-2 items-center bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-slate-800 p-3 text-xs font-medium"
+                  className="bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-slate-800 p-3 flex flex-col space-y-3 text-xs font-medium"
                 >
-                  <div>
-                    <div className="text-slate-400 text-[10px] uppercase font-bold">
-                      Label
+                  <div className="grid grid-cols-4 gap-2 items-center">
+                    <div>
+                      <div className="text-slate-400 text-[10px] uppercase font-bold">
+                        Label
+                      </div>
+                      <div className="font-extrabold">{c.label}</div>
                     </div>
-                    <div className="font-extrabold">{c.label}</div>
+                    <div>
+                      <div className="text-slate-400 text-[10px] uppercase font-bold">
+                        Type
+                      </div>
+                      <div className="font-extrabold">
+                        {c.chargeType === "PER_DAY" ? "Per Day" : "One-Time"}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-slate-400 text-[10px] uppercase font-bold">
+                        Rate{c.chargeType === "PER_DAY" ? ` × ${c.days}d` : ""}
+                      </div>
+                      <div className="font-extrabold">{fmtMoney(c.rate)}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-slate-400 text-[10px] uppercase font-bold">
+                        Amount
+                      </div>
+                      <div className="font-extrabold text-[#0f4a29] dark:text-[#52b788]">
+                        {fmtMoney(c.amount)}
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <div className="text-slate-400 text-[10px] uppercase font-bold">
-                      Type
+
+                  <div className="grid grid-cols-3 gap-2 items-center pt-3 border-t border-slate-200 dark:border-slate-700">
+                    <div>
+                      <div className="text-slate-400 text-[10px] uppercase font-bold">
+                        Amount Paid
+                      </div>
+                      <div className="font-extrabold">
+                        {fmtMoney(c.amountPaid)}
+                      </div>
                     </div>
-                    <div className="font-extrabold">
-                      {c.chargeType === "PER_DAY" ? "Per Day" : "One-Time"}
+                    <div>
+                      <div className="text-slate-400 text-[10px] uppercase font-bold">
+                        Payment Date
+                      </div>
+                      <div className="font-extrabold">
+                        {fmtDate(c.paymentDate)}
+                      </div>
                     </div>
-                  </div>
-                  <div>
-                    <div className="text-slate-400 text-[10px] uppercase font-bold">
-                      Rate{c.chargeType === "PER_DAY" ? ` × ${c.days}d` : ""}
-                    </div>
-                    <div className="font-extrabold">{fmtMoney(c.rate)}</div>
-                  </div>
-                  <div>
-                    <div className="text-slate-400 text-[10px] uppercase font-bold">
-                      Amount
-                    </div>
-                    <div className="font-extrabold text-[#0f4a29] dark:text-[#52b788]">
-                      {fmtMoney(c.amount)}
+                    <div className="text-right">
+                      <div className="text-slate-400 text-[10px] uppercase font-bold">
+                        Status
+                      </div>
+                      <div className="flex justify-end pt-0.5">
+                        {c.paymentStatus === "Partial Paid" ? (
+                          <span className="text-[9px] font-bold uppercase px-2 py-0.5 rounded border bg-amber-50 text-amber-600 border-amber-200 dark:bg-amber-950/30 dark:border-amber-900/30">
+                            Partial Paid
+                          </span>
+                        ) : c.paymentStatus === "Paid" ? (
+                          <span className="text-[9px] font-bold uppercase px-2 py-0.5 rounded border bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-950/30 dark:border-emerald-900/30">
+                            Paid
+                          </span>
+                        ) : (
+                          <span className="font-extrabold text-slate-600">
+                            Pending
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
               ))}
+
               <div className="flex justify-end pt-2 border-t border-slate-100 dark:border-slate-800">
-                <div className="text-xs font-bold text-slate-500">
-                  Additional Charges Total:{" "}
-                  <span className="text-sm font-extrabold text-slate-900 dark:text-white">
-                    {fmtMoney(
-                      additionalCharges.reduce(
-                        (s, c) => s + (c.amount || 0),
-                        0,
-                      ),
-                    )}
+                <div className="flex flex-wrap items-center justify-end gap-4 text-xs font-bold text-slate-500 w-full">
+                  <span>
+                    Gross Total:{" "}
+                    <span className="text-sm font-extrabold text-slate-900 dark:text-white">
+                      {fmtMoney(additionalChargesGross)}
+                    </span>
+                  </span>
+                  {additionalChargesPaid > 0 && (
+                    <span>
+                      Total Paid:{" "}
+                      <span className="text-sm font-extrabold text-[#0f4a29] dark:text-[#52b788]">
+                        {fmtMoney(additionalChargesPaid)}
+                      </span>
+                    </span>
+                  )}
+                  <span>
+                    Net Due:{" "}
+                    <span className="text-sm font-extrabold text-rose-500">
+                      {fmtMoney(additionalChargesNet)}
+                    </span>
                   </span>
                 </div>
               </div>
@@ -449,40 +520,54 @@ export default function IPDPatientDetails({
           )}
         </SectionCard>
 
-        <SectionCard title="Prescribed Medicines" icon={Pill}>
-          {medicines.length === 0 ? (
-            <p className="text-xs text-slate-400 text-center py-4 font-medium">
-              No medicines prescribed.
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {medicines.map((m) => (
-                <div
-                  key={m.id}
-                  className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-slate-800 text-xs"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-extrabold text-slate-900 dark:text-white">
-                      {m.name} × {m.quantity} {m.unit}
-                    </span>
-                  </div>
-                  {(m.dosage ||
-                    m.frequency ||
-                    m.duration ||
-                    m.instructions) && (
-                    <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                      {m.dosage && <span>Dosage: {m.dosage}</span>}
-                      {m.frequency && <span>Frequency: {m.frequency}</span>}
-                      {m.duration && <span>Duration: {m.duration}</span>}
-                      {m.instructions && (
-                        <span>Instructions: {m.instructions}</span>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))}
+        <SectionCard title="Payment Information" icon={CreditCard}>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+            <StatTile label="Deposit" val={fmtMoney(p.deposit)} />
+            <StatTile label="Cash" val={fmtMoney(p.cash)} />
+            <StatTile label="UPI" val={fmtMoney(p.upi)} />
+            <StatTile label="Card" val={fmtMoney(p.card)} />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
+            <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-3 border border-slate-100 dark:border-slate-800">
+              <div className="text-[10px] font-bold uppercase text-slate-400">
+                Gross Total Charges
+              </div>
+              <div className="font-extrabold text-sm text-slate-900 dark:text-white">
+                {fmtMoney(grandGrossTotal)}
+              </div>
+              <div className="text-[9px] font-medium text-slate-400 mt-0.5">
+                Room: {fmtMoney(totalStay)} | Addtl:{" "}
+                {fmtMoney(additionalChargesGross)}
+              </div>
             </div>
-          )}
+
+            <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-3 border border-slate-100 dark:border-slate-800">
+              <div className="text-[10px] font-bold uppercase text-slate-400">
+                Total Amount Paid
+              </div>
+              <div className="font-extrabold text-sm text-[#0f4a29] dark:text-[#52b788]">
+                {fmtMoney(totalPaymentsOverall)}
+              </div>
+              <div className="text-[9px] font-medium text-slate-400 mt-0.5">
+                Ledger Payments: {fmtMoney(basePaid)} | Addtl Paid:{" "}
+                {fmtMoney(additionalChargesPaid)}
+              </div>
+            </div>
+
+            <div
+              className={`rounded-2xl p-3 border ${estimatedBalance > 0 ? "bg-rose-50 border-rose-200 dark:bg-rose-950/20 dark:border-rose-900/30" : "bg-[#0f4a29]/10 border-[#0f4a29]/20"}`}
+            >
+              <div className="text-[10px] font-bold uppercase text-slate-400">
+                Estimated Balance Due
+              </div>
+              <div
+                className={`font-extrabold text-sm ${estimatedBalance > 0 ? "text-rose-600 dark:text-rose-400" : "text-[#0f4a29] dark:text-[#52b788]"}`}
+              >
+                {fmtMoney(estimatedBalance)}
+              </div>
+            </div>
+          </div>
         </SectionCard>
 
         {p.notes && (

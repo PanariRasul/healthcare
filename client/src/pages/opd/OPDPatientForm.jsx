@@ -227,7 +227,7 @@ export default function OPDPatientForm({ editPatient, onDone }) {
         subtitle="Outpatient consultation registration and billing details"
       />
 
-      <form onSubmit={handleSubmit} className="space-y-5 max-w-4xl mx-auto">
+      <form onSubmit={handleSubmit} className="space-y-5  mx-auto">
         {error && (
           <div className="bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/30 rounded-2xl px-4 py-3 text-rose-600 dark:text-rose-400 text-xs font-bold">
             {error}

@@ -4,7 +4,6 @@ import {
   fromDbMedicine,
   toDbStockAction,
   toDbUnitType,
-  toDbStockUnit,
   toDbMedicineType,
   computeStockBreakdown,
 } from "./pharmacy.mappers.js";
@@ -140,9 +139,8 @@ export async function createMedicine(req, res) {
                   action: "ADD",
                   quantity: initialQuantity,
                   reason: "Initial stock entry",
-                  unit: totalStripsNum > 0 ? "STRIP" : null,
-                  enteredQuantity:
-                    totalStripsNum > 0 ? totalStripsNum : initialQuantity,
+                  enteredStrips: totalStripsNum > 0 ? totalStripsNum : null,
+                  enteredTablets: totalStripsNum > 0 ? null : initialQuantity,
                 },
               ],
             }
@@ -394,11 +392,14 @@ export async function getMedicineStats(req, res) {
     return res.status(500).json({ message: "Could not fetch pharmacy stats." });
   }
 }
-// Body: { action: "Add Stock" | "Reduce Stock" | "Stock Adjustment", quantity, reason }
-// Updates the medicine's quantity AND logs a StockHistory row, atomically.
+// Body: { action: "Add Stock" | "Reduce Stock" | "Stock Adjustment", strips, tablets, reason }
+// `strips` and `tablets` can both be sent together in one update (e.g. 2
+// Strips + 5 loose Tablets) — at least one of them must be a positive
+// number. Updates the medicine's quantity AND logs a StockHistory row,
+// atomically.
 export async function addStockEntry(req, res) {
   try {
-    const { action, quantity, reason, unit } = req.body;
+    const { action, strips, tablets, reason } = req.body;
     const dbAction = toDbStockAction(action);
 
     if (!dbAction) {
@@ -407,11 +408,13 @@ export async function addStockEntry(req, res) {
           "action must be one of: Add Stock, Reduce Stock, Stock Adjustment.",
       });
     }
-    const qty = parseInt(quantity, 10);
-    if (!qty || qty <= 0) {
-      return res
-        .status(400)
-        .json({ message: "Enter a valid positive quantity." });
+
+    const stripsNum = Math.max(parseInt(strips, 10) || 0, 0);
+    const tabletsNum = Math.max(parseInt(tablets, 10) || 0, 0);
+    if (stripsNum <= 0 && tabletsNum <= 0) {
+      return res.status(400).json({
+        message: "Enter a quantity of Strips and/or Tablets.",
+      });
     }
     if (!reason || !reason.trim()) {
       return res.status(400).json({ message: "A reason is required." });
@@ -423,15 +426,12 @@ export async function addStockEntry(req, res) {
     if (!medicine)
       return res.status(404).json({ message: "Medicine not found." });
 
-    // Defaults to TABLET (i.e. "the number entered IS the tablet count")
-    // when no unit is sent, so any older client still calling this endpoint
-    // without a `unit` field behaves exactly as it did before this feature.
-    const dbUnit = toDbStockUnit(unit) || "TABLET";
+    // Strips only convert to tablets when this medicine's packing is known;
+    // falls back to 1:1 if tabletsPerStrip was never set, same as before.
     const tabletsPerStrip = medicine.tabletsPerStrip || 1;
-    const multiplier = dbUnit === "STRIP" ? tabletsPerStrip : 1;
-    // Everything from here on operates in tablets, same as before this
-    // feature — only the multiplier used to get there is new.
-    const qtyInTablets = qty * multiplier;
+    // Everything from here on operates in tablets — Strips and Tablets
+    // entered are combined into one total.
+    const qtyInTablets = stripsNum * tabletsPerStrip + tabletsNum;
 
     let newQuantity;
     let historyQuantity;
@@ -447,7 +447,7 @@ export async function addStockEntry(req, res) {
       newQuantity = medicine.quantity - qtyInTablets;
       historyQuantity = -qtyInTablets;
     } else {
-      // ADJUST — quantity typed (converted to tablets) IS the new absolute quantity
+      // ADJUST — combined total (converted to tablets) IS the new absolute quantity
       newQuantity = qtyInTablets;
       historyQuantity = qtyInTablets - medicine.quantity;
     }
@@ -464,8 +464,8 @@ export async function addStockEntry(req, res) {
           action: dbAction,
           quantity: historyQuantity,
           reason: reason.trim(),
-          unit: dbUnit,
-          enteredQuantity: qty,
+          enteredStrips: stripsNum || null,
+          enteredTablets: tabletsNum || null,
         },
       });
       return tx.medicine.findUnique({

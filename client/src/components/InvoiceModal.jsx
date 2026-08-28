@@ -281,7 +281,7 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
       (data.dailyCharges || []).forEach((c) => {
         items.push({
           id: nextRowId(),
-          description: `Stay / Room Charges${c.date ? ` — ${fmtDate(c.date)}` : ""}`,
+          description: `Per Day Bed / Treatment Charges ${c.date ? ` — ${fmtDate(c.date)}` : ""}`,
           qty: c.days || 1,
           rate: c.rate || 0,
         });
@@ -897,6 +897,9 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                     {CLINIC.tagline}
                   </p>
                 )}
+                <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 mt-0.5">
+                  GSTIN: 29ABBFV4474H1ZS
+                </p>
               </div>
 
               {savedInvoiceId && (
@@ -979,15 +982,13 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b-2 border-slate-800 dark:border-slate-200 text-left">
-                      <th className="py-2 pr-2 font-extrabold w-8">#</th>
-                      <th className="py-2 px-2 font-extrabold">
-                        Treatment / Item
-                      </th>
+                      <th className="py-2 pr-2 font-extrabold w-8">Sl.No</th>
+                      <th className="py-2 px-2 font-extrabold">Treatment</th>
                       <th className="py-2 px-2 font-extrabold text-right w-20">
-                        Qty
+                        Days
                       </th>
                       <th className="py-2 px-2 font-extrabold text-right w-24">
-                        Rate
+                        Price
                       </th>
                       <th className="py-2 pl-2 font-extrabold text-right w-28">
                         Amount
@@ -1138,7 +1139,7 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                     ))}
                   </select>
                 </div>
-                <div>
+                <div className={!notes.trim() ? "print:hidden print-hide" : ""}>
                   <div className="text-slate-400 text-[10px] uppercase font-bold mb-1">
                     Notes
                   </div>

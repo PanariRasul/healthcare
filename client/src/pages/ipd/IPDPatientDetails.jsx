@@ -348,7 +348,10 @@ export default function IPDPatientDetails({
           </div>
         </SectionCard>
 
-        <SectionCard title="Daily / Room Charges" icon={Clock}>
+        <SectionCard
+          title="Per Day Bed Charges / Per Day Treatment Charges"
+          icon={Clock}
+        >
           {dailyCharges.length === 0 ? (
             <p className="text-xs text-slate-400 text-center py-4 font-medium">
               No room charges recorded.

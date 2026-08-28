@@ -427,7 +427,10 @@ export default function IPDPatientForm({ editPatient, onDone }) {
           </p>
         </SectionCard>
 
-        <SectionCard title="Daily / Room Charges" icon={Clock}>
+        <SectionCard
+          title="Per Day Bed Charges / Per Day Treatment Charges"
+          icon={Clock}
+        >
           <div className="space-y-3">
             <p className="text-xs text-slate-400 font-medium">
               Specify the date range for each room charge period. The number of

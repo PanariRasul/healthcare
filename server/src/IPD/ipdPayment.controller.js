@@ -1,5 +1,9 @@
 // server/src/IPD/ipdPayment.controller.js
 import prisma from "../lib/prisma.js";
+// totalPaid / balance / settlement / the refund cap live in one place —
+// see the header of ipdTotals.js for why this controller no longer
+// computes them itself.
+import { recalcPatientTotals } from "./ipdTotals.js";
 
 const METHOD_VALUES = ["CASH", "UPI", "CARD", "BANK_TRANSFER", "OTHER"];
 
@@ -34,43 +38,17 @@ const parseOptionalDate = (input, fallback) => {
   return date;
 };
 
-function calcSettlement(totalStay, totalPaid) {
-  const stay = round2(totalStay);
-  const paid = round2(totalPaid);
-  if (paid <= 0) return "Pending";
-  if (paid > stay) return "Overpaid"; // patient has a credit balance
-  if (paid === stay) return "Fully Paid";
-  return "Partially Paid";
-}
-
-// Recomputes and persists a patient's totalPaid / balance / settlementStatus
-// from the sum of its IPD_Payment rows. Call inside a transaction after any
-// payment create/update/delete so the patient record always stays in sync.
+// NOTE: calcSettlement and recalcPatientTotals used to live here. The local
+// copy set totalPaid = SUM(IPD_Payment), which silently wiped out every
+// advance entered on the admission form (deposit / cash / UPI / card) the
+// moment anyone recorded a single ledger payment — and ipd.controller did
+// the reverse. Both now call the shared recalcPatientTotals in ipdTotals.js,
+// which ADDS the two sources instead of letting one overwrite the other:
 //
-// NOTE: overpayments are allowed (see addPayment/updatePayment — the old
-// "amount can't exceed balance" guard was removed). That means `balance`
-// can go negative here, representing a credit/advance the patient has on
-// file. We intentionally do NOT clamp it to 0 anymore: a negative balance
-// is what lets that credit get carried forward and auto-adjusted against
-// future charges (e.g. additional charges / next billing cycle raising
-// totalStay). Clamping to 0 would silently erase that credit.
-async function recalcPatientTotals(tx, patientId) {
-  const patient = await tx.iPD_Patient.findUnique({ where: { id: patientId } });
-  if (!patient) throw Object.assign(new Error("Patient not found"), { status: 404 });
-
-  const agg = await tx.iPD_Payment.aggregate({
-    where: { patientId },
-    _sum: { amount: true },
-  });
-  const totalPaid = round2(agg._sum.amount || 0);
-  const balance = round2(patient.totalStay - totalPaid); // can be negative = credit/advance
-  const settlementStatus = calcSettlement(patient.totalStay, totalPaid);
-
-  return tx.iPD_Patient.update({
-    where: { id: patientId },
-    data: { totalPaid, balance, settlementStatus },
-  });
-}
+//   totalPaid = (deposit + cash + upi + card) + SUM(IPD_Payment.amount)
+//
+// It also applies the refund cap, so a recorded refund can never push a
+// patient's balance above what they actually owe.
 
 // GET /api/ipd-payments/summary  -> one row per patient, for the Payment List page
 export async function listPaymentSummary(req, res) {
@@ -188,7 +166,8 @@ export async function addPayment(req, res) {
       // Overpayment is allowed on purpose — reception may collect more than
       // the current balance (e.g. patient paying ahead). The excess shows
       // up as a negative balance (credit) and is auto-adjusted against
-      // future charges/billing instead of being rejected here.
+      // future charges/billing instead of being rejected here. It also
+      // becomes refundable: see the refund rule in ipdTotals.js.
       const overpaidBy = amt > patient.balance ? round2(amt - patient.balance) : 0;
 
       const payment = await tx.iPD_Payment.create({

@@ -15,6 +15,8 @@ import {
 } from "../../components/UI";
 import OPDPatientDetails from "./OPDPatientDetails";
 import InvoiceModal from "../../components/InvoiceModal";
+import ProformaInvoiceModal from "../../components/ProformaInvoiceModal";
+import { fmtDate, fmtINR } from "../../lib/dateFormat";
 import {
   UserPlus,
   SlidersHorizontal,
@@ -22,6 +24,7 @@ import {
   Search,
   Receipt,
   FilePlus2,
+  FileText,
 } from "lucide-react";
 import { api } from "../../lib/api";
 
@@ -44,6 +47,7 @@ export default function OPDPatients({ isDoctor = false }) {
   const [deleteId, setDeleteId] = useState(null);
   const [viewing, setViewing] = useState(null);
   const [invoicing, setInvoicing] = useState(null);
+  const [proforma, setProforma] = useState(null);
   const [manualInvoicing, setManualInvoicing] = useState(false);
   const navigate = useNavigate();
   const basePath = isDoctor ? "/doctor/opd" : "/opd";
@@ -155,6 +159,7 @@ export default function OPDPatients({ isDoctor = false }) {
               setPage(1);
             }}
             className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-full px-4 py-2 text-xs font-extrabold text-slate-800 dark:text-white focus:outline-none focus:border-[#0f4a29]"
+            title={dateFilter ? `Showing ${fmtDate(dateFilter)}` : "Filter by visit date"}
           />
           {dateFilter && (
             <button
@@ -212,14 +217,14 @@ export default function OPDPatients({ isDoctor = false }) {
                 <Td>{p.age}y</Td>
                 <Td>{p.phone}</Td>
                 <Td>{p.place}</Td>
-                <Td className="text-amber-600 font-bold">₹{p.cash || 0}</Td>
+                <Td className="text-amber-600 font-bold">{fmtINR(p.cash)}</Td>
                 <Td className="text-[#0f4a29] dark:text-[#52b788] font-bold">
-                  ₹{p.upi || 0}
+                  {fmtINR(p.upi)}
                 </Td>
                 <Td className="font-extrabold text-slate-900 dark:text-white">
-                  ₹{p.total}
+                  {fmtINR(p.total)}
                 </Td>
-                <Td>{p.visitDate}</Td>
+                <Td>{fmtDate(p.visitDate)}</Td>
                 <Td>
                   <span
                     className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border ${followUpStatusColors[p.followUpStatus] || followUpStatusColors["Pending"]}`}
@@ -241,8 +246,15 @@ export default function OPDPatients({ isDoctor = false }) {
                       onClick={() => setDeleteId(p.id)}
                     />
                     <button
+                      onClick={() => setProforma(p)}
+                      title="Proforma invoice (view / print)"
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-[#0f4a29] hover:bg-[#0f4a29]/10 transition-colors"
+                    >
+                      <FileText className="w-4 h-4" />
+                    </button>
+                    <button
                       onClick={() => setInvoicing(p)}
-                      title="Generate Invoice"
+                      title="Generate / edit invoice"
                       className="p-1.5 rounded-lg text-slate-400 hover:text-[#0f4a29] hover:bg-[#0f4a29]/10 transition-colors"
                     >
                       <Receipt className="w-4 h-4" />
@@ -269,7 +281,18 @@ export default function OPDPatients({ isDoctor = false }) {
         <InvoiceModal
           type="OPD"
           patient={invoicing}
-          onClose={() => setInvoicing(null)}
+          onClose={() => {
+            setInvoicing(null);
+            fetchPatients();
+          }}
+        />
+      )}
+
+      {proforma && (
+        <ProformaInvoiceModal
+          type="OPD"
+          patient={proforma}
+          onClose={() => setProforma(null)}
         />
       )}
 

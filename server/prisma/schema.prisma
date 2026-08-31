@@ -171,6 +171,17 @@ model IPD_Patient {
   balance          Float  @default(0)
   settlementStatus String @default("Pending")
 
+  // --- Refund tracking ---------------------------------------------------
+  // Money handed BACK to the patient, e.g. deposit ₹10,000 against a final
+  // bill of ₹5,000 leaves ₹5,000 to refund. Recorded from IPD → Patient
+  // Details → "Record Refund", and mirrored onto the patient's invoice so
+  // it prints on the bill. Zero/absent = no refund, and the invoice hides
+  // the refund line entirely in that case.
+  refundAmount Float     @default(0)
+  refundReason String?
+  refundDate   DateTime? @db.Date
+  refundMethod String? // "Cash" | "UPI" | "Bank Transfer" | ...
+
   oil     Int @default(0)
   protein Int @default(0)
   syrup   Int @default(0)
@@ -188,10 +199,17 @@ model IPD_Patient {
 }
 
 model IPD_DailyCharge {
-  id        String      @id @default(cuid())
-  date      DateTime
-  toDate    DateTime?   // ---> NEW FIELD <---
-  days      Float
+  id     String    @id @default(cuid())
+  date   DateTime // "From" date of the charge period
+  toDate DateTime? // "To" date; null = still running (open-ended period)
+  // Day count for this period. Both the From and To date are COUNTED, so
+  // 01/01/2026 → 10/01/2026 is 10 days, not 9.
+  days   Float
+  // True when a user typed the day count in by hand instead of letting it
+  // come from the dates. Persisted so re-opening the edit form never
+  // silently overwrites a manual figure with a freshly-calculated one.
+  daysManual Boolean @default(false)
+
   rate      Float
   amount    Float
   patientId String
@@ -267,11 +285,15 @@ model IPD_Payment {
 }
 
 model IPD_Document {
-  id        String      @id @default(cuid())
-  name      String
-  type      String
-  url       String
-  fileType  String?
+  id   String @id @default(cuid())
+  name String
+  type String
+  url  String
+  // Object key in R2. The controller has always written and read this
+  // (uploadDocument / deleteDocument / deletePatient) but it was missing
+  // from the model, so every document write failed at the Prisma layer.
+  key      String?
+  fileType String?
   patientId String
   createdAt DateTime    @default(now())
   patient   IPD_Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
@@ -338,6 +360,30 @@ model Invoice {
   createdById   String?
   createdByName String?
 
+  // --- Draft / finalized lifecycle (OPD + IPD) ---------------------------
+  // Every OPD/IPD patient gets exactly ONE invoice (enforced in
+  // invoice.controller.js — see assertNoExistingInvoice). It starts as
+  // DRAFT and can be edited as many times as needed. Finalizing locks it:
+  // no further edits are accepted, and for IPD a patient cannot be
+  // discharged until their invoice is FINALIZED.
+  //
+  // PHARMACY invoices are unaffected — they stay one-per-sale and are
+  // always treated as DRAFT.
+  status          String    @default("DRAFT") // "DRAFT" | "FINALIZED"
+  finalizedAt     DateTime?
+  finalizedById   String?
+  finalizedByName String?
+
+  // --- Refund (IPD) ------------------------------------------------------
+  // Snapshot of IPD_Patient.refund* at the time this invoice was last
+  // saved, so a finalized bill keeps the exact refund figure it was
+  // printed with. The refund line is omitted from the printed invoice
+  // whenever refundAmount is 0.
+  refundAmount Float     @default(0)
+  refundReason String?
+  refundDate   DateTime?
+  refundMethod String?
+
   // --- Pharmacy return tracking (patientType === "PHARMACY" only) ---
   // NONE = nothing returned yet, PARTIAL = some line items/quantities
   // returned, FULL = every unit on every dispensable line item returned.
@@ -351,6 +397,16 @@ model Invoice {
 
   createdAt DateTime @default(now())
 
+  // NOTE: the "one invoice per OPD/IPD patient" rule is enforced in the
+  // controller, not by a plain @@unique, because PHARMACY invoices are
+  // deliberately allowed to repeat for the same patientId (a registered
+  // patient can buy medicine many times). To back it with a real database
+  // guarantee, add this partial unique index by hand in a migration:
+  //
+  //   CREATE UNIQUE INDEX "invoices_one_per_patient"
+  //     ON "invoices" ("patientType", "patientId")
+  //     WHERE "patientType" IN ('OPD', 'IPD');
+  //
   @@index([patientType, patientId])
   @@map("invoices")
 }

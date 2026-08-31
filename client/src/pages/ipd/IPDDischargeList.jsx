@@ -23,6 +23,8 @@ import IPDPatientDetails from "./IPDPatientDetails";
 import InvoiceModal from "../../components/InvoiceModal";
 import DischargeModal from "./DischargeModal";
 import PageSizeSelect, { DEFAULT_PAGE_SIZE } from "./PageSizeSelect";
+import ProformaInvoiceModal from "../../components/ProformaInvoiceModal";
+import { fmtDate, fmtINR } from "../../lib/dateFormat";
 import {
     Search,
     Paperclip,
@@ -35,15 +37,9 @@ import {
 
 const LATEST_DOCS_SHOWN = 3;
 
-const fmtDate = (d) =>
-  d
-    ? new Date(d).toLocaleDateString("en-IN", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-      })
-    : "—";
-const fmtMoney = (n) => `₹${(Number(n) || 0).toLocaleString("en-IN")}`;
+// Dates and money come from lib/dateFormat, so dd/mm/yyyy is guaranteed
+// rather than left to the browser's locale.
+const fmtMoney = fmtINR;
 
 function DocumentsCell({ documents = [] }) {
     const count = documents.length;
@@ -97,6 +93,7 @@ export default function IPDDischargeList({ readOnly = false }) {
     const [editing, setEditing] = useState(null);
     const [viewing, setViewing] = useState(null);
     const [invoicing, setInvoicing] = useState(null);
+    const [proforma, setProforma] = useState(null);
     const [discharging, setDischarging] = useState(null);
 
     const load = () => {
@@ -312,8 +309,15 @@ export default function IPDDischargeList({ readOnly = false }) {
                                             <ActionBtn type="view" onClick={() => setViewing(p)} />
                                             <ActionBtn type="edit" onClick={() => setEditing(p)} />
                                             <button
+                                                onClick={() => setProforma(p)}
+                                                title="Proforma invoice (view / print)"
+                                                className="p-1.5 rounded-lg text-slate-400 hover:text-[#0f4a29] hover:bg-[#0f4a29]/10 transition-colors"
+                                            >
+                                                <FileText className="w-4 h-4" />
+                                            </button>
+                                            <button
                                                 onClick={() => setInvoicing(p)}
-                                                title="Generate Invoice"
+                                                title="View invoice"
                                                 className="p-1.5 rounded-lg text-slate-400 hover:text-[#0f4a29] hover:bg-[#0f4a29]/10 transition-colors"
                                             >
                                                 <Receipt className="w-4 h-4" />
@@ -340,7 +344,18 @@ export default function IPDDischargeList({ readOnly = false }) {
                 <InvoiceModal
                     type="IPD"
                     patient={invoicing}
-                    onClose={() => setInvoicing(null)}
+                    onClose={() => {
+                        setInvoicing(null);
+                        load();
+                    }}
+                />
+            )}
+
+            {proforma && (
+                <ProformaInvoiceModal
+                    type="IPD"
+                    patient={proforma}
+                    onClose={() => setProforma(null)}
                 />
             )}
 

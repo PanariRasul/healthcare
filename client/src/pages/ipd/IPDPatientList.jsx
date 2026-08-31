@@ -22,6 +22,8 @@ import IPDPatientDetails from "./IPDPatientDetails";
 import InvoiceModal from "../../components/InvoiceModal";
 import DischargeModal from "./DischargeModal";
 import PageSizeSelect, { DEFAULT_PAGE_SIZE } from "./PageSizeSelect";
+import ProformaInvoiceModal from "../../components/ProformaInvoiceModal";
+import { fmtDate, fmtINR } from "../../lib/dateFormat";
 import {
   UserPlus,
   Search,
@@ -45,7 +47,9 @@ const dischargeStatusColors = {
   Discharged: "bg-[#0f4a29]/10 text-[#0f4a29] border-[#0f4a29]/20",
 };
 
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString() : "—");
+// Dates and money come from lib/dateFormat so every screen reads dd/mm/yyyy.
+// The old local helper used toLocaleDateString() with no locale, which
+// renders mm/dd/yyyy on an en-US browser.
 
 function DocumentsCell({ documents = [] }) {
   const count = documents.length;
@@ -102,6 +106,7 @@ export default function IPDPatientList({ readOnly = false }) {
   const [editing, setEditing] = useState(null);
   const [viewing, setViewing] = useState(null);
   const [invoicing, setInvoicing] = useState(null);
+  const [proforma, setProforma] = useState(null);
   const [discharging, setDischarging] = useState(null);
   const navigate = useNavigate();
 
@@ -287,14 +292,14 @@ export default function IPDPatientList({ readOnly = false }) {
                   )}
                 </Td>
                 <Td>{fmtDate(p.admissionDate)}</Td>
-                <Td className="font-bold">₹{p.totalStay?.toLocaleString()}</Td>
+                <Td className="font-bold">{fmtINR(p.totalStay)}</Td>
                 <Td className="text-[#0f4a29] dark:text-[#52b788] font-bold">
-                  ₹{p.totalPaid?.toLocaleString()}
+                  {fmtINR(p.totalPaid)}
                 </Td>
                 <Td>
                   {p.balance > 0 ? (
                     <span className="text-rose-500 font-extrabold">
-                      ₹{p.balance?.toLocaleString()}
+                      {fmtINR(p.balance)}
                     </span>
                   ) : (
                     <span className="text-[#0f4a29] font-bold text-xs">
@@ -322,8 +327,15 @@ export default function IPDPatientList({ readOnly = false }) {
                         onClick={() => setDeleteId(p.id)}
                       />
                       <button
+                        onClick={() => setProforma(p)}
+                        title="Proforma invoice (view / print)"
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-[#0f4a29] hover:bg-[#0f4a29]/10 transition-colors"
+                      >
+                        <FileText className="w-4 h-4" />
+                      </button>
+                      <button
                         onClick={() => setInvoicing(p)}
-                        title="Generate Invoice"
+                        title="Generate / edit invoice"
                         className="p-1.5 rounded-lg text-slate-400 hover:text-[#0f4a29] hover:bg-[#0f4a29]/10 transition-colors"
                       >
                         <Receipt className="w-4 h-4" />
@@ -366,7 +378,18 @@ export default function IPDPatientList({ readOnly = false }) {
         <InvoiceModal
           type="IPD"
           patient={invoicing}
-          onClose={() => setInvoicing(null)}
+          onClose={() => {
+            setInvoicing(null);
+            load();
+          }}
+        />
+      )}
+
+      {proforma && (
+        <ProformaInvoiceModal
+          type="IPD"
+          patient={proforma}
+          onClose={() => setProforma(null)}
         />
       )}
 

@@ -16,9 +16,13 @@ import {
   AlertTriangle,
   Receipt,
   ArrowRightLeft,
+  ShieldCheck,
 } from "lucide-react";
 import { SectionCard, StatusBadge, PageHeader } from "../../components/UI";
 import InvoiceModal from "../../components/InvoiceModal";
+import ProformaInvoiceModal from "../../components/ProformaInvoiceModal";
+import { fetchPatientInvoice } from "../../api/invoice.api";
+import { fmtDate, fmtINR } from "../../lib/dateFormat";
 import { api } from "../../lib/api";
 
 const followUpStatusColors = {
@@ -36,12 +40,16 @@ export default function OPDPatientDetails({
   onUpdated,
   isDoctor = false,
 }) {
-  const [p, setP] = useState(initP);
+  // `patient` is required, but read every field through optional chaining so
+  // a missing prop renders the "no patient" notice below instead of throwing
+  // during the very first render. Hooks can't be skipped with an early
+  // return, so the guard has to live in the initialisers themselves.
+  const [p, setP] = useState(initP || null);
   const [loadingPatient, setLoadingPatient] = useState(true);
   const [doctorForm, setDoctorForm] = useState({
-    diagnosis: initP.diagnosis || "",
-    prescription: initP.prescription || "",
-    doctorNotes: initP.doctorNotes || "",
+    diagnosis: initP?.diagnosis || "",
+    prescription: initP?.prescription || "",
+    doctorNotes: initP?.doctorNotes || "",
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -57,9 +65,38 @@ export default function OPDPatientDetails({
   const [rxError, setRxError] = useState("");
   const [deletingRxId, setDeletingRxId] = useState(null);
   const [invoicing, setInvoicing] = useState(false);
+  const [proforma, setProforma] = useState(false);
   const [movingToIPD, setMovingToIPD] = useState(false);
 
+  // Each OPD patient has exactly one invoice. Knowing whether it exists and
+  // whether it's locked drives the button label and the status pill below.
+  const [invoice, setInvoice] = useState(null);
+  const [invoiceLoading, setInvoiceLoading] = useState(true);
+
+  const loadInvoice = () => {
+    if (!initP?.id) {
+      setInvoiceLoading(false);
+      return;
+    }
+    setInvoiceLoading(true);
+    fetchPatientInvoice("OPD", initP.id)
+      .then(setInvoice)
+      .catch(() => setInvoice(null))
+      .finally(() => setInvoiceLoading(false));
+  };
+
   useEffect(() => {
+    loadInvoice();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initP?.id]);
+
+  const invoiceLocked = invoice?.status === "FINALIZED";
+
+  useEffect(() => {
+    if (!initP?.id) {
+      setLoadingPatient(false);
+      return;
+    }
     (async () => {
       setLoadingPatient(true);
       try {
@@ -71,7 +108,7 @@ export default function OPDPatientDetails({
         setLoadingPatient(false);
       }
     })();
-  }, [initP.id]);
+  }, [initP?.id]);
 
   useEffect(() => {
     (async () => {
@@ -87,7 +124,31 @@ export default function OPDPatientDetails({
     })();
   }, []);
 
-  if (!p) return null;
+  // Reached when this component is mounted without a patient — usually a
+  // routing/import mistake (e.g. the wrong component exported from a file).
+  // A blank screen makes that almost impossible to diagnose, so say what
+  // happened.
+  if (!p) {
+    return (
+      <div className="space-y-4 font-sans bg-[#f4f5f7] dark:bg-slate-950 p-6 rounded-3xl">
+        <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/30 rounded-2xl px-4 py-3 text-amber-800 dark:text-amber-300 text-xs font-bold flex items-start gap-2.5">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>
+            No patient was passed to this screen, so there is nothing to show.
+            Go back to the OPD directory and open a patient from the list.
+          </span>
+        </div>
+        {onBack && (
+          <button
+            onClick={onBack}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 text-xs font-extrabold"
+          >
+            <ArrowLeft className="w-4 h-4" /> Back to List
+          </button>
+        )}
+      </div>
+    );
+  }
 
   const handleMoveToIPD = async () => {
     const confirmed = window.confirm(
@@ -227,10 +288,22 @@ export default function OPDPatientDetails({
               Move to IPD
             </button>
             <button
+              onClick={() => setProforma(true)}
+              title="See and print the bill as it stands"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 text-xs font-extrabold"
+            >
+              <FileText className="w-4 h-4" /> Proforma Invoice
+            </button>
+            <button
               onClick={() => setInvoicing(true)}
               className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#0f4a29] hover:bg-[#165a34] text-white text-xs font-extrabold shadow-xs"
             >
-              <Receipt className="w-4 h-4" /> Generate Invoice
+              <Receipt className="w-4 h-4" />
+              {invoiceLocked
+                ? "View Invoice"
+                : invoice
+                  ? "Edit Invoice"
+                  : "Generate Invoice"}
             </button>
             <button
               onClick={onBack}
@@ -242,11 +315,46 @@ export default function OPDPatientDetails({
         }
       />
 
+      {/* One invoice per patient — its state is shown here because a draft
+          can still be edited, while a finalized bill is locked for good. */}
+      {!invoiceLoading && (
+        <div className="-mt-2">
+          {invoiceLocked ? (
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-extrabold px-3 py-1 rounded-full bg-[#0f4a29]/10 text-[#0f4a29] dark:text-[#52b788] border border-[#0f4a29]/20">
+              <ShieldCheck className="w-3.5 h-3.5" />
+              Invoice {invoice.invoiceNumber} finalized ·{" "}
+              {fmtDate(invoice.finalizedAt)} · {fmtINR(invoice.grandTotal)}
+            </span>
+          ) : invoice ? (
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-extrabold px-3 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+              <Receipt className="w-3.5 h-3.5" />
+              Invoice {invoice.invoiceNumber} — draft, still editable
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-extrabold px-3 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+              <Receipt className="w-3.5 h-3.5" />
+              No invoice generated yet
+            </span>
+          )}
+        </div>
+      )}
+
       {invoicing && (
         <InvoiceModal
           type="OPD"
           patient={p}
-          onClose={() => setInvoicing(false)}
+          onClose={() => {
+            setInvoicing(false);
+            loadInvoice();
+          }}
+        />
+      )}
+
+      {proforma && (
+        <ProformaInvoiceModal
+          type="OPD"
+          patient={p}
+          onClose={() => setProforma(false)}
         />
       )}
 
@@ -266,7 +374,7 @@ export default function OPDPatientDetails({
               { label: "Gender", val: p.gender },
               { label: "Place", val: p.place },
               { label: "Phone", val: p.phone },
-              { label: "Visit Date", val: p.visitDate },
+              { label: "Visit Date", val: fmtDate(p.visitDate) },
             ].map((item) => (
               <div key={item.label}>
                 <div className="text-slate-400 text-[10px] uppercase font-bold mb-0.5">
@@ -284,7 +392,7 @@ export default function OPDPatientDetails({
           <div className="grid grid-cols-3 gap-3">
             <div className="bg-amber-50/50 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/30 rounded-2xl p-3 text-center">
               <div className="font-extrabold text-base text-amber-700">
-                ₹{p.cash}
+                {fmtINR(p.cash)}
               </div>
               <div className="text-[10px] uppercase font-bold text-slate-400 mt-0.5">
                 Cash
@@ -292,7 +400,7 @@ export default function OPDPatientDetails({
             </div>
             <div className="bg-[#0f4a29]/10 border border-[#0f4a29]/20 rounded-2xl p-3 text-center">
               <div className="font-extrabold text-base text-[#0f4a29] dark:text-[#52b788]">
-                ₹{p.upi}
+                {fmtINR(p.upi)}
               </div>
               <div className="text-[10px] uppercase font-bold text-slate-400 mt-0.5">
                 UPI
@@ -300,7 +408,7 @@ export default function OPDPatientDetails({
             </div>
             <div className="bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 rounded-2xl p-3 text-center">
               <div className="font-extrabold text-base text-slate-900 dark:text-white">
-                ₹{p.total}
+                {fmtINR(p.total)}
               </div>
               <div className="text-[10px] uppercase font-bold text-slate-400 mt-0.5">
                 Total Paid
@@ -317,7 +425,7 @@ export default function OPDPatientDetails({
                   Follow-Up Date
                 </div>
                 <div className="text-slate-900 dark:text-white font-extrabold">
-                  {p.followUpDate || "Not scheduled"}
+                  {p.followUpDate ? fmtDate(p.followUpDate) : "Not scheduled"}
                 </div>
               </div>
               <div>
@@ -338,11 +446,10 @@ export default function OPDPatientDetails({
                     key={s}
                     disabled={statusSaving}
                     onClick={() => handleFollowUpStatus(s)}
-                    className={`px-3 py-1 rounded-full text-xs font-extrabold border transition-all ${
-                      p.followUpStatus === s
+                    className={`px-3 py-1 rounded-full text-xs font-extrabold border transition-all ${p.followUpStatus === s
                         ? followUpStatusColors[s]
                         : "bg-white dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-700"
-                    }`}
+                      }`}
                   >
                     {s}
                   </button>
@@ -402,7 +509,7 @@ export default function OPDPatientDetails({
             </div>
           </div>
         </SectionCard>
-        
+
       </div>
     </div>
   );

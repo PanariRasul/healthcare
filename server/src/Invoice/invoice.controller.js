@@ -4,8 +4,19 @@ import prisma from "../lib/prisma.js";
 const TYPE_VALUES = ["OPD", "IPD", "PHARMACY"];
 const PREFIX = "VPC"; // clinic prefix — change here if the clinic name changes
 
+// Types that are limited to ONE invoice per patient. A PHARMACY sale can
+// repeat for the same person as often as they buy medicine, so it's excluded.
+const SINGLE_INVOICE_TYPES = ["OPD", "IPD"];
+
+const STATUS_DRAFT = "DRAFT";
+const STATUS_FINALIZED = "FINALIZED";
+
 function isValidType(t) {
   return TYPE_VALUES.includes(t);
+}
+
+function isSingleInvoiceType(t) {
+  return SINGLE_INVOICE_TYPES.includes(t);
 }
 
 // Thrown for pharmacy-stock problems hit while saving a PHARMACY invoice
@@ -16,6 +27,14 @@ class StockError extends Error {}
 function toNum(v) {
   const n = parseFloat(v);
   return Number.isFinite(n) ? n : 0;
+}
+
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+function parseOptionalDate(input) {
+  if (input === undefined || input === null || input === "") return null;
+  const d = new Date(input);
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
 // Applies the pharmacy-stock impact of a PHARMACY invoice's line items —
@@ -87,13 +106,14 @@ async function applyPharmacyInvoiceStockChanges(
 }
 
 // Builds the next sequential invoice number for a given patient type, e.g.
-// VPC-INV-OPD-000001, VPC-INV-IPD-000042. Numbering is per-type and based on
-// the highest existing number for that type (same pattern used for
-// OPD token numbers / IPD serial numbers elsewhere in this codebase).
+// VPC-INV-OPD-000001, VPC-INV-IPD-000042. Numbering is per-type.
+//
+// Ordered by invoiceNumber (not createdAt) so a back-dated or imported row
+// can't hand out a number that's already taken.
 async function generateInvoiceNumber(patientType) {
   const last = await prisma.invoice.findFirst({
     where: { patientType },
-    orderBy: { createdAt: "desc" },
+    orderBy: { invoiceNumber: "desc" },
     select: { invoiceNumber: true },
   });
   const lastNum = last?.invoiceNumber
@@ -101,6 +121,70 @@ async function generateInvoiceNumber(patientType) {
     : 0;
   const next = lastNum + 1;
   return `${PREFIX}-INV-${patientType}-${String(next).padStart(6, "0")}`;
+}
+
+// Returns the existing OPD/IPD invoice for a patient, or null. Always null
+// for PHARMACY, which has no one-per-patient rule.
+async function findExistingInvoice(patientType, patientId) {
+  if (!isSingleInvoiceType(patientType)) return null;
+  return prisma.invoice.findFirst({
+    where: { patientType, patientId },
+    orderBy: { createdAt: "asc" },
+  });
+}
+
+// Pulls the totals a caller sent and normalises them.
+//
+// THE REFUND RULE
+//   A refund is only ever the return of an OVERPAYMENT — the money the
+//   patient handed over above the bill:
+//
+//     refundable = max(0, paid − grandTotal)
+//
+//   Deposit ₹10,000 against a ₹5,000 bill leaves ₹5,000 refundable.
+//   Paid ₹5,000 against a ₹5,000 bill leaves nothing to refund.
+//
+//   The refund is capped at that figure here. Without the cap, refunding
+//   more than the overpayment silently manufactures a "balance due" the
+//   patient never owed — which is exactly what a ₹15,202 refund against a
+//   ₹37,200 bill fully paid was doing.
+//
+//     netPaid = paid − refund      (always ≥ grandTotal when overpaid)
+//     balance = grandTotal − netPaid
+//
+//   With the cap in place, a refund can never push the balance above
+//   grandTotal − paid. A negative balance means the clinic is still
+//   holding an advance that hasn't been returned yet.
+function normaliseTotals(body) {
+  const subtotal = round2(body.subtotal);
+  const discount = round2(body.discount);
+  const gstPercent = round2(body.gstPercent);
+  const gstAmount = round2(body.gstAmount);
+  const grandTotal = round2(body.grandTotal);
+  const paid = round2(body.paid);
+  const refundable = round2(Math.max(0, paid - grandTotal));
+  // Backstop cap. The IPD controller rejects an over-refund outright with a
+  // readable message; this clamp keeps the stored invoice self-consistent
+  // even if some other caller sends a bad figure.
+  const refundAmount = Math.min(
+    refundable,
+    Math.max(0, round2(body.refundAmount)),
+  );
+  const balance = round2(grandTotal - (paid - refundAmount));
+
+  return {
+    subtotal,
+    discount,
+    gstPercent,
+    gstAmount,
+    grandTotal,
+    paid,
+    balance,
+    refundAmount,
+    refundReason: body.refundReason?.trim() || null,
+    refundDate: parseOptionalDate(body.refundDate),
+    refundMethod: body.refundMethod || null,
+  };
 }
 
 // GET /api/invoices/next/:patientType -> { invoiceNumber }
@@ -119,6 +203,29 @@ export async function previewNextInvoiceNumber(req, res) {
   } catch (err) {
     console.error("previewNextInvoiceNumber error:", err);
     res.status(500).json({ message: "Failed to preview invoice number" });
+  }
+}
+
+// GET /api/invoices/single/:patientType/:patientId -> { invoice } | { invoice: null }
+//
+// The one invoice belonging to an OPD/IPD patient. This is what the
+// Generate Invoice screen, the proforma preview, and the discharge check
+// all read: if it comes back null the patient has no invoice yet, if it
+// comes back with status "FINALIZED" the invoice is locked.
+export async function getPatientInvoice(req, res) {
+  try {
+    const { patientType, patientId } = req.params;
+    if (!isValidType(patientType)) {
+      return res.status(400).json({
+        message: `patientType must be one of: ${TYPE_VALUES.join(", ")}`,
+      });
+    }
+
+    const invoice = await findExistingInvoice(patientType, patientId);
+    res.json({ invoice: invoice || null });
+  } catch (err) {
+    console.error("getPatientInvoice error:", err);
+    res.status(500).json({ message: "Failed to fetch invoice" });
   }
 }
 
@@ -142,15 +249,15 @@ export async function listPatientInvoices(req, res) {
   }
 }
 
-// GET /api/invoices/type/:patientType?search= -> every invoice of one type
-// (e.g. all "PHARMACY" invoices), newest first. Used by the Pharmacy
-// Billing list page — unlike listPatientInvoices above, this isn't scoped
-// to a single patient. `search` (optional) matches invoiceNumber or
+// GET /api/invoices/type/:patientType?search=&page=&limit= -> every invoice
+// of one type (e.g. all "PHARMACY" invoices), newest first. Used by the
+// Pharmacy Billing list page — unlike listPatientInvoices above, this isn't
+// scoped to a single patient. `search` (optional) matches invoiceNumber or
 // patientName, case-insensitive.
 export async function listInvoicesByType(req, res) {
   try {
     const { patientType } = req.params;
-    const { search = "" } = req.query;
+    const { search = "", page, limit } = req.query;
     if (!isValidType(patientType)) {
       return res.status(400).json({
         message: `patientType must be one of: ${TYPE_VALUES.join(", ")}`,
@@ -165,11 +272,37 @@ export async function listInvoicesByType(req, res) {
       ];
     }
 
-    const invoices = await prisma.invoice.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
+    // Unpaginated by default so existing callers keep working unchanged.
+    if (!page && !limit) {
+      const invoices = await prisma.invoice.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+      });
+      return res.json(invoices);
+    }
+
+    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 200);
+
+    const [invoices, total] = await Promise.all([
+      prisma.invoice.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip: (pageNum - 1) * limitNum,
+        take: limitNum,
+      }),
+      prisma.invoice.count({ where }),
+    ]);
+
+    res.json({
+      invoices,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        totalPages: Math.ceil(total / limitNum) || 1,
+      },
     });
-    res.json(invoices);
   } catch (err) {
     console.error("listInvoicesByType error:", err);
     res.status(500).json({ message: "Failed to fetch invoices" });
@@ -190,9 +323,110 @@ export async function getInvoice(req, res) {
   }
 }
 
-// PUT /api/invoices/:id -> update an existing invoice in place (edit/correct it).
-// invoiceNumber, patientType, patientId, createdBy* are immutable — only the
-// billable content and payment fields can change.
+// POST /api/invoices -> create the patient's invoice.
+//
+// OPD and IPD patients get exactly one invoice. Asking for a second returns
+// 409 along with the existing invoice, so the client can just open that one
+// for editing instead of erroring out.
+export async function createInvoice(req, res) {
+  try {
+    const {
+      patientType,
+      patientId,
+      patientName,
+      lineItems,
+      paymentMethod,
+      notes,
+      createdById,
+      createdByName,
+    } = req.body;
+
+    // Prefer the authenticated session (if requireAuth ran on this route and
+    // populated req.user) over whatever the client sent, so this can't be
+    // spoofed. Falls back to the client-supplied values for setups where
+    // this route isn't behind requireAuth yet.
+    const resolvedCreatedById = req.user?.id || createdById || null;
+    const resolvedCreatedByName = req.user?.fullName || createdByName || null;
+
+    if (!isValidType(patientType)) {
+      return res.status(400).json({
+        message: `patientType must be one of: ${TYPE_VALUES.join(", ")}`,
+      });
+    }
+    if (!patientId || !patientName) {
+      return res
+        .status(400)
+        .json({ message: "patientId and patientName are required" });
+    }
+    if (!Array.isArray(lineItems) || lineItems.length === 0) {
+      return res
+        .status(400)
+        .json({ message: "lineItems must be a non-empty array" });
+    }
+
+    const existing = await findExistingInvoice(patientType, patientId);
+    if (existing) {
+      return res.status(409).json({
+        message: `${patientName} already has an invoice (${existing.invoiceNumber}). Open that invoice to make changes — a patient can only have one.`,
+        invoice: existing,
+      });
+    }
+
+    const invoiceNumber = await generateInvoiceNumber(patientType);
+    const totals = normaliseTotals(req.body);
+
+    const data = {
+      invoiceNumber,
+      patientType,
+      patientId,
+      patientName,
+      lineItems,
+      ...totals,
+      paymentMethod: paymentMethod || null,
+      notes: notes || null,
+      status: STATUS_DRAFT,
+      createdById: resolvedCreatedById,
+      createdByName: resolvedCreatedByName,
+    };
+
+    let invoice;
+    if (patientType === "PHARMACY") {
+      // Dispensing through Pharmacy Billing now actually deducts stock —
+      // done inside the same transaction as the invoice write so a stock
+      // failure (not enough left) never leaves a half-saved invoice behind.
+      invoice = await prisma.$transaction(async (tx) => {
+        await applyPharmacyInvoiceStockChanges(tx, {
+          previousItems: [],
+          newItems: lineItems,
+          contextLabel: `${patientName} (Invoice ${invoiceNumber})`,
+        });
+        return tx.invoice.create({ data });
+      });
+    } else {
+      invoice = await prisma.invoice.create({ data });
+    }
+
+    res.status(201).json(invoice);
+  } catch (err) {
+    if (err instanceof StockError) {
+      return res.status(400).json({ message: err.message });
+    }
+    // Unique-constraint trip on invoiceNumber (two saves at the same instant)
+    if (err.code === "P2002") {
+      return res.status(409).json({
+        message: "That invoice number was just taken. Try saving again.",
+      });
+    }
+    console.error("createInvoice error:", err);
+    res.status(500).json({ message: "Failed to save invoice" });
+  }
+}
+
+// PUT /api/invoices/:id -> update an existing invoice in place.
+//
+// invoiceNumber, patientType, patientId and createdBy* are immutable — only
+// the billable content, payment and refund fields can change, and only while
+// the invoice is still a DRAFT. A FINALIZED invoice is rejected with 409.
 export async function updateInvoice(req, res) {
   try {
     const existing = await prisma.invoice.findUnique({
@@ -201,18 +435,16 @@ export async function updateInvoice(req, res) {
     if (!existing)
       return res.status(404).json({ message: "Invoice not found" });
 
-    const {
-      lineItems,
-      subtotal,
-      discount,
-      gstPercent,
-      gstAmount,
-      grandTotal,
-      paid,
-      balance,
-      paymentMethod,
-      notes,
-    } = req.body;
+    if (existing.status === STATUS_FINALIZED) {
+      return res.status(409).json({
+        message: `Invoice ${existing.invoiceNumber} was finalized on ${new Date(
+          existing.finalizedAt,
+        ).toLocaleDateString("en-IN")} and can no longer be edited.`,
+        invoice: existing,
+      });
+    }
+
+    const { lineItems, paymentMethod, notes } = req.body;
 
     if (!Array.isArray(lineItems) || lineItems.length === 0) {
       return res
@@ -222,13 +454,7 @@ export async function updateInvoice(req, res) {
 
     const data = {
       lineItems,
-      subtotal: Number(subtotal) || 0,
-      discount: Number(discount) || 0,
-      gstPercent: Number(gstPercent) || 0,
-      gstAmount: Number(gstAmount) || 0,
-      grandTotal: Number(grandTotal) || 0,
-      paid: Number(paid) || 0,
-      balance: Number(balance) || 0,
+      ...normaliseTotals(req.body),
       paymentMethod: paymentMethod || null,
       notes: notes || null,
     };
@@ -263,96 +489,83 @@ export async function updateInvoice(req, res) {
   }
 }
 
-// POST /api/invoices -> create + persist a new invoice
-export async function createInvoice(req, res) {
+// PATCH /api/invoices/:id/finalize -> lock the invoice.
+//
+// After this the invoice is read-only: updateInvoice rejects it, and for IPD
+// it's the gate that lets the patient be discharged. There is no un-finalize
+// endpoint on purpose — a finalized bill is the clinic's issued document.
+export async function finalizeInvoice(req, res) {
   try {
-    const {
-      patientType,
-      patientId,
-      patientName,
-      lineItems,
-      subtotal,
-      discount,
-      gstPercent,
-      gstAmount,
-      grandTotal,
-      paid,
-      balance,
-      paymentMethod,
-      notes,
-      createdById,
-      createdByName,
-    } = req.body;
+    const invoice = await prisma.invoice.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!invoice) return res.status(404).json({ message: "Invoice not found" });
 
-    // Prefer the authenticated session (if requireAuth ran on this route and
-    // populated req.user) over whatever the client sent, so this can't be
-    // spoofed. Falls back to the client-supplied values for setups where
-    // this route isn't behind requireAuth yet.
-    const resolvedCreatedById = req.user?.id || createdById || null;
-    const resolvedCreatedByName = req.user?.fullName || createdByName || null;
+    if (invoice.status === STATUS_FINALIZED) {
+      return res.status(409).json({
+        message: `Invoice ${invoice.invoiceNumber} is already finalized.`,
+        invoice,
+      });
+    }
 
-    if (!isValidType(patientType)) {
+    const items = Array.isArray(invoice.lineItems) ? invoice.lineItems : [];
+    if (items.length === 0) {
       return res.status(400).json({
-        message: `patientType must be one of: ${TYPE_VALUES.join(", ")}`,
+        message: "Add at least one line item before finalizing this invoice.",
       });
     }
-    if (!patientId || !patientName) {
-      return res
-        .status(400)
-        .json({ message: "patientId and patientName are required" });
-    }
-    if (!Array.isArray(lineItems) || lineItems.length === 0) {
-      return res
-        .status(400)
-        .json({ message: "lineItems must be a non-empty array" });
-    }
 
-    const invoiceNumber = await generateInvoiceNumber(patientType);
+    const updated = await prisma.invoice.update({
+      where: { id: invoice.id },
+      data: {
+        status: STATUS_FINALIZED,
+        finalizedAt: new Date(),
+        finalizedById: req.user?.id || req.body.finalizedById || null,
+        finalizedByName: req.user?.fullName || req.body.finalizedByName || null,
+      },
+    });
 
-    const data = {
-      invoiceNumber,
-      patientType,
-      patientId,
-      patientName,
-      lineItems,
-      subtotal: Number(subtotal) || 0,
-      discount: Number(discount) || 0,
-      gstPercent: Number(gstPercent) || 0,
-      gstAmount: Number(gstAmount) || 0,
-      grandTotal: Number(grandTotal) || 0,
-      paid: Number(paid) || 0,
-      balance: Number(balance) || 0,
-      paymentMethod: paymentMethod || null,
-      notes: notes || null,
-      createdById: resolvedCreatedById,
-      createdByName: resolvedCreatedByName,
-    };
-
-    let invoice;
-    if (patientType === "PHARMACY") {
-      // Dispensing through Pharmacy Billing now actually deducts stock —
-      // done inside the same transaction as the invoice write so a stock
-      // failure (not enough left) never leaves a half-saved invoice behind.
-      invoice = await prisma.$transaction(async (tx) => {
-        await applyPharmacyInvoiceStockChanges(tx, {
-          previousItems: [],
-          newItems: lineItems,
-          contextLabel: `${patientName} (Invoice ${invoiceNumber})`,
-        });
-        return tx.invoice.create({ data });
-      });
-    } else {
-      invoice = await prisma.invoice.create({ data });
-    }
-
-    res.status(201).json(invoice);
+    res.json(updated);
   } catch (err) {
-    if (err instanceof StockError) {
-      return res.status(400).json({ message: err.message });
-    }
-    console.error("createInvoice error:", err);
-    res.status(500).json({ message: "Failed to save invoice" });
+    console.error("finalizeInvoice error:", err);
+    res.status(500).json({ message: "Failed to finalize invoice" });
   }
+}
+
+// Used by ipd.controller.dischargePatient — kept here so the "is this
+// patient billed and locked?" rule lives in one place.
+export async function getFinalizedInvoiceFor(patientType, patientId) {
+  const invoice = await findExistingInvoice(patientType, patientId);
+  if (!invoice) return { invoice: null, finalized: false };
+  return { invoice, finalized: invoice.status === STATUS_FINALIZED };
+}
+
+// Mirrors an IPD patient's refund figures onto their DRAFT invoice so the
+// bill prints the refund without anyone having to re-open the invoice
+// editor. Silently does nothing when there's no invoice yet, or when the
+// invoice is already finalized (a locked bill keeps its printed numbers).
+export async function syncRefundToInvoice(
+  patientId,
+  { refundAmount, refundReason, refundDate, refundMethod },
+) {
+  const invoice = await findExistingInvoice("IPD", patientId);
+  if (!invoice || invoice.status === STATUS_FINALIZED) return invoice;
+
+  // Same cap as normaliseTotals — only an overpayment can be refunded.
+  const refundable = round2(Math.max(0, invoice.paid - invoice.grandTotal));
+  const amount = Math.min(refundable, Math.max(0, round2(refundAmount)));
+  const balance = round2(invoice.grandTotal - (invoice.paid - amount));
+
+  return prisma.invoice.update({
+    where: { id: invoice.id },
+    data: {
+      refundAmount: amount,
+      refundReason: refundReason || null,
+      refundDate: parseOptionalDate(refundDate),
+      refundMethod: refundMethod || null,
+      balance,
+    },
+  });
 }
 
 // PATCH /api/invoices/:id/return -> mark some/all quantities on a PHARMACY

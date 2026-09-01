@@ -492,30 +492,42 @@ export default function PharmacyInvoiceModal({
     };
   }, [fitToHalfPage, resetScale]);
 
-  async function handleSave() {
+async function handleSave() {
     if (savingRef.current) return;
     savingRef.current = true;
     setSaving(true);
     setSaveError("");
     try {
+      const formattedLineItems = lineItems.map(({ medicineId, description, qty, rate }) => {
+        const itemQty = Number(qty) || 0;
+        const itemRate = Number(rate) || 0;
+        return {
+          medicineId: medicineId || null,
+          description,
+          qty: itemQty,
+          rate: itemRate,
+          amount: Number((itemQty * itemRate).toFixed(2)),
+        };
+      });
+
       const payload = {
         patientType: "PHARMACY",
         patientId: chosenPatient.id,
         patientName: chosenPatient.name,
-        lineItems: lineItems.map(({ medicineId, description, qty, rate }) => ({
-          medicineId: medicineId || null,
-          description,
-          qty: Number(qty) || 0,
-          rate: Number(rate) || 0,
-        })),
+        lineItems: formattedLineItems,
+        subtotal: Number(subtotal.toFixed(2)),
         discount: discountVal,
-        gstPercent: 0, // Set to 0 since GST is removed
+        gstPercent: 0,
+        gstAmount: 0,
+        grandTotal: Number(grandTotal.toFixed(2)),
         paid: paidVal,
+        balance: Math.max(0, Number((grandTotal - paidVal).toFixed(2))),
         paymentMethod,
         notes,
         createdById: user?.id || null,
         createdByName: user?.fullName || null,
       };
+
       const saved = await createInvoice(payload);
       setSavedInvoiceId(saved.id);
       setInvoiceNumber(saved.invoiceNumber);
@@ -523,6 +535,7 @@ export default function PharmacyInvoiceModal({
       setCreatedByDisplay(saved.createdByName || user?.fullName || "");
       setDiscount(saved.discount);
       setPaid(saved.paid);
+
       if (!chosenPatient.__manual) {
         fetchPatientInvoices("PHARMACY", chosenPatient.id)
           .then((invs) => setHistory(invs))
@@ -542,19 +555,32 @@ export default function PharmacyInvoiceModal({
     setSaving(true);
     setSaveError("");
     try {
-      const payload = {
-        lineItems: lineItems.map(({ medicineId, description, qty, rate }) => ({
+      const formattedLineItems = lineItems.map(({ medicineId, description, qty, rate, returnedQty }) => {
+        const itemQty = Number(qty) || 0;
+        const itemRate = Number(rate) || 0;
+        return {
           medicineId: medicineId || null,
           description,
-          qty: Number(qty) || 0,
-          rate: Number(rate) || 0,
-        })),
+          qty: itemQty,
+          rate: itemRate,
+          amount: Number((itemQty * itemRate).toFixed(2)),
+          returnedQty: Number(returnedQty) || 0,
+        };
+      });
+
+      const payload = {
+        lineItems: formattedLineItems,
+        subtotal: Number(subtotal.toFixed(2)),
         discount: discountVal,
-        gstPercent: 0, // Set to 0 since GST is removed
+        gstPercent: 0,
+        gstAmount: 0,
+        grandTotal: Number(grandTotal.toFixed(2)),
         paid: paidVal,
+        balance: Math.max(0, Number((grandTotal - paidVal).toFixed(2))),
         paymentMethod,
         notes,
       };
+
       const updated = await updateInvoice(savedInvoiceId, payload);
       setInvoiceDate(updated.createdAt);
       setDiscount(updated.discount);
@@ -565,6 +591,7 @@ export default function PharmacyInvoiceModal({
           returnedQty: Number(updated.lineItems?.[i]?.returnedQty) || 0,
         })),
       );
+
       if (!chosenPatient.__manual) {
         fetchPatientInvoices("PHARMACY", chosenPatient.id)
           .then((invs) => setHistory(invs))

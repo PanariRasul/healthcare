@@ -34,7 +34,12 @@ import { api } from "../lib/api";
 import { fetchPatient as fetchIpdPatient } from "../pages/ipd/api/ipd.api";
 import { fetchPatientInvoice } from "../api/invoice.api";
 import { fmtDate, fmtDateTime, fmtINR } from "../lib/dateFormat";
-import { buildLineItems, calcTotals } from "../lib/invoiceLines";
+import {
+    buildLineItems,
+    calcTotals,
+    buildPaymentRows,
+    sumPayments,
+} from "../lib/invoiceLines";
 
 const CLINIC = {
     name: "Virupakshipuram Paralysis Centre",
@@ -112,11 +117,23 @@ export default function ProformaInvoiceModal({ type, patient, onClose }) {
     // invoice keeps its own figures.
     const liveRefund = isIPD && !isFinalized ? Number(full?.refundAmount) || 0 : null;
 
+    // Dated list of what the patient handed over. A finalized invoice keeps
+    // its own snapshot; a draft re-reads the patient's ledger, since payments
+    // can be added after the invoice was last saved.
+    const paymentRows = buildPaymentRows(
+        isFinalized ? invoice?.payments || [] : full?.payments || invoice?.payments || [],
+    );
+    const hasPaymentRows = paymentRows.length > 0;
+
     const totals = invoice
         ? (() => {
             const refundVal =
                 liveRefund !== null ? liveRefund : invoice.refundAmount || 0;
-            const paidVal = invoice.paid || 0;
+            const paidVal = hasPaymentRows
+                ? sumPayments(
+                    isFinalized ? invoice.payments : full?.payments || invoice.payments,
+                )
+                : invoice.paid || 0;
             const grandTotal = invoice.grandTotal || 0;
             return {
                 subtotal: invoice.subtotal || 0,
@@ -131,7 +148,11 @@ export default function ProformaInvoiceModal({ type, patient, onClose }) {
         })()
         : calcTotals({
             lineItems,
-            paid: isIPD ? full?.totalPaid : full?.total,
+            paid: hasPaymentRows
+                ? sumPayments(full?.payments)
+                : isIPD
+                    ? full?.totalPaid
+                    : full?.total,
             refundAmount: isIPD ? full?.refundAmount : 0,
         });
 
@@ -170,21 +191,24 @@ export default function ProformaInvoiceModal({ type, patient, onClose }) {
     const settlementSentence = (() => {
         const bill = fmtINR(totals.grandTotal);
         const paidTxt = fmtINR(totals.paidVal);
+        const paidWhat = hasPaymentRows
+            ? `${paymentRows.length} payment${paymentRows.length === 1 ? "" : "s"} totalling ${paidTxt}`
+            : paidTxt;
         const bal = totals.balance;
         if (!showRefund) {
             if (bal > 0)
-                return `Bill ${bill}. Patient has paid ${paidTxt}, so ${fmtINR(bal)} is still to collect.`;
+                return `Bill ${bill}. Patient has paid ${paidWhat}, so ${fmtINR(bal)} is still to collect.`;
             if (bal < 0)
-                return `Bill ${bill}. Patient has paid ${paidTxt} — ${fmtINR(Math.abs(bal))} more than the bill.`;
-            return `Bill ${bill}, paid in full. Neither side owes the other anything.`;
+                return `Bill ${bill}. Patient has paid ${paidWhat} — ${fmtINR(Math.abs(bal))} more than the bill.`;
+            return `Bill ${bill}, paid in full (${paidWhat}). Neither side owes the other anything.`;
         }
         const refundTxt = fmtINR(totals.refundVal);
         const keptTxt = fmtINR(totals.netPaid);
         if (bal > 0)
-            return `Bill ${bill}. Patient paid ${paidTxt} and ${refundTxt} was returned, so the clinic has kept ${keptTxt} — ${fmtINR(bal)} is still to collect.`;
+            return `Bill ${bill}. Patient paid ${paidWhat} and ${refundTxt} was returned, so the clinic has kept ${keptTxt} — ${fmtINR(bal)} is still to collect.`;
         if (bal < 0)
-            return `Bill ${bill}. Patient paid ${paidTxt} and ${refundTxt} was returned, leaving ${keptTxt} held — ${fmtINR(Math.abs(bal))} more than the bill.`;
-        return `Bill ${bill}. Patient paid ${paidTxt}, the extra ${refundTxt} was returned, and the ${keptTxt} kept covers the bill exactly. Neither side owes the other anything.`;
+            return `Bill ${bill}. Patient paid ${paidWhat} and ${refundTxt} was returned, leaving ${keptTxt} held — ${fmtINR(Math.abs(bal))} more than the bill.`;
+        return `Bill ${bill}. Patient paid ${paidWhat}, the extra ${refundTxt} was returned, and the ${keptTxt} kept covers the bill exactly. Neither side owes the other anything.`;
     })();
 
     return createPortal(
@@ -472,17 +496,51 @@ export default function ProformaInvoiceModal({ type, patient, onClose }) {
                                     </span>
                                 </div>
 
-                                <div className="flex justify-between pt-1.5 mt-1.5 border-t border-slate-200 dark:border-slate-700">
-                                    <span className="text-slate-500">
-                                        Paid by Patient
-                                        <span className="block text-[9px] text-slate-400 font-medium leading-tight">
-                                            Deposit + cash + UPI + card
+                                {/* Each payment on its own dated line, oldest first, then
+                    the total — so the refund below can be read against what
+                    was actually collected and when. */}
+                                {hasPaymentRows ? (
+                                    <>
+                                        <div className="pt-1.5 mt-1.5 border-t border-slate-200 dark:border-slate-700">
+                                            <span className="text-slate-500 text-[10px] uppercase font-bold tracking-wide">
+                                                Payments Received
+                                            </span>
+                                        </div>
+                                        {paymentRows.map((pm) => (
+                                            <div key={pm.key} className="flex justify-between gap-2">
+                                                <span className="text-slate-500 min-w-0">
+                                                    {fmtDate(pm.paymentDate)}
+                                                    <span className="text-slate-400">
+                                                        {pm.label ? ` · ${pm.label}` : ""}
+                                                        {pm.referenceNumber ? ` · ${pm.referenceNumber}` : ""}
+                                                    </span>
+                                                </span>
+                                                <span className="font-extrabold shrink-0">
+                                                    {fmtINR(pm.amount)}
+                                                </span>
+                                            </div>
+                                        ))}
+                                        <div className="flex justify-between border-t border-slate-200 dark:border-slate-700 pt-1 mt-1">
+                                            <span className="font-extrabold">
+                                                Total Deposits
+                                                <span className="block text-[9px] text-slate-400 font-medium leading-tight">
+                                                    {paymentRows.length} payment
+                                                    {paymentRows.length === 1 ? "" : "s"}
+                                                </span>
+                                            </span>
+                                            <span className="font-extrabold">
+                                                {fmtINR(totals.paidVal)}
+                                            </span>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <div className="flex justify-between pt-1.5 mt-1.5 border-t border-slate-200 dark:border-slate-700">
+                                        <span className="text-slate-500">Paid by Patient</span>
+                                        <span className="font-extrabold">
+                                            {fmtINR(totals.paidVal)}
                                         </span>
-                                    </span>
-                                    <span className="font-extrabold">
-                                        {fmtINR(totals.paidVal)}
-                                    </span>
-                                </div>
+                                    </div>
+                                )}
 
                                 {/* Refund rows appear only when money actually went back. */}
                                 {showRefund && (
@@ -517,8 +575,8 @@ export default function ProformaInvoiceModal({ type, patient, onClose }) {
                                     <span className="font-extrabold">{balanceLabel}</span>
                                     <span
                                         className={`font-extrabold ${totals.balance > 0
-                                                ? "text-rose-500"
-                                                : "text-[#0f4a29] dark:text-[#52b788]"
+                                            ? "text-rose-500"
+                                            : "text-[#0f4a29] dark:text-[#52b788]"
                                             }`}
                                     >
                                         {balanceValue}

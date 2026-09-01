@@ -2,32 +2,42 @@
 //
 // THE ONE DEFINITION OF WHAT A PATIENT HAS PAID
 //
-// Money reaches an IPD patient through two doors, and until now each one
-// overwrote the other:
+//   totalPaid = SUM(IPD_Payment.amount)
 //
-//   1. The admission form's Deposit / Cash / UPI / Card boxes. These live
-//      as columns on IPD_Patient. ipd.controller used to set
-//      totalPaid = deposit + cash + upi + card.
+// Every rupee a patient hands over is a row in the IPD_Payment ledger, with
+// its own amount, date and mode. Both doors write there:
 //
-//   2. The Payments screen, which writes IPD_Payment ledger rows.
-//      ipdPayment.controller used to set totalPaid = SUM(IPD_Payment).
+//   1. The admission form's "Payments Received" list.
+//   2. The Payments screen.
 //
-// Whichever ran last won. Recording one ledger payment erased every
-// advance on the admission form; re-saving the admission form erased every
-// ledger payment. It also produced the error this module was written to
-// fix: raising Deposit to ₹4,000 on the edit form left totalPaid stuck at
-// ₹3,000, so a legitimate ₹1,000 refund was rejected with "the patient has
-// paid ₹3,000".
+// It used to be split. The admission form held four flat columns
+// (deposit / cash / upi / card) and set totalPaid = their sum; the Payments
+// screen set totalPaid = SUM(IPD_Payment). Whichever ran last won, so
+// recording one ledger payment erased every advance on the form and
+// vice-versa. Editing the Deposit box from ₹3,000 to ₹4,000 left totalPaid
+// stuck at ₹3,000 and a legitimate ₹1,000 refund was rejected.
 //
-// Both doors are real money, so they ADD:
-//
-//   totalPaid = (deposit + cash + upi + card) + SUM(IPD_Payment.amount)
+// The four columns still exist, but they are now DERIVED from the ledger —
+// see legacyPaymentColumns below — purely so the dashboard tiles and stats
+// keep working. Nothing reads them to decide what a patient has paid.
 //
 // Everything downstream — balance, settlement status, the refund cap, the
-// "Pending" column on the patient list — is derived from that one figure,
-// here, so the two controllers can never disagree again.
+// "Pending" column on the patient list — comes from totalPaid, computed
+// here, so no two callers can disagree again.
 
 export const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+// Mirrors the PaymentMethod enum in schema.prisma.
+export const PAYMENT_METHODS = ["CASH", "UPI", "CARD", "BANK_TRANSFER", "OTHER"];
+
+// Display labels for the UI and printed invoices.
+export const METHOD_LABELS = {
+  CASH: "Cash",
+  UPI: "UPI",
+  CARD: "Card",
+  BANK_TRANSFER: "Bank Transfer",
+  OTHER: "Other",
+};
 
 export function calcSettlement(totalStay, netPaid) {
   const stay = round2(totalStay);
@@ -36,16 +46,6 @@ export function calcSettlement(totalStay, netPaid) {
   if (paid > stay) return "Overpaid"; // patient has a credit balance
   if (paid === stay) return "Fully Paid";
   return "Partially Paid";
-}
-
-// Advances entered on the admission form itself.
-export function sumAdvances({ deposit, cash, upi, card }) {
-  return round2(
-    (Number(deposit) || 0) +
-      (Number(cash) || 0) +
-      (Number(upi) || 0) +
-      (Number(card) || 0),
-  );
 }
 
 // Total of the IPD_Payment ledger for one patient. `tx` may be the Prisma
@@ -58,14 +58,40 @@ export async function sumLedger(tx, patientId) {
   return round2(agg._sum.amount || 0);
 }
 
+// Rebuilds the legacy deposit / cash / upi / card columns from a list of
+// payments, so the dashboard and the payment tiles on Patient Details keep
+// showing sensible figures.
+//
+//   deposit = everything collected
+//   cash / upi / card = that same total split by mode
+//
+// deposit deliberately overlaps the other three; it is the whole, not a
+// fourth mode. Never sum all four to get what a patient paid — that would
+// double-count. Use totalPaid.
+export function legacyPaymentColumns(payments = []) {
+  const byMethod = (m) =>
+    round2(
+      payments
+        .filter((p) => p.method === m)
+        .reduce((s, p) => s + (Number(p.amount) || 0), 0),
+    );
+
+  return {
+    deposit: round2(payments.reduce((s, p) => s + (Number(p.amount) || 0), 0)),
+    cash: byMethod("CASH"),
+    upi: byMethod("UPI"),
+    card: byMethod("CARD"),
+  };
+}
+
 // THE REFUND RULE
 //   A refund is only ever the return of an OVERPAYMENT — money the patient
 //   handed over above the bill:
 //
 //     refundable = max(0, totalPaid − totalStay)
 //
-//   Deposit ₹10,000 against a ₹5,000 bill leaves ₹5,000 to return. Paid
-//   ₹3,000 against a ₹3,000 bill leaves nothing.
+//   Deposits totalling ₹10,000 against a ₹5,000 bill leave ₹5,000 to
+//   return. ₹3,000 against a ₹3,000 bill leaves nothing.
 //
 //   Anything more would be the clinic handing back its own money, and it
 //   shows on the patient list as "Pending" that the patient doesn't owe.
@@ -97,7 +123,10 @@ export function checkRefund(totalStay, totalPaid, requested) {
 export function deriveTotals({ totalStay, totalPaid, refundAmount = 0 }) {
   const stay = round2(totalStay);
   const paid = round2(totalPaid);
-  const refund = Math.min(refundableAmount(stay, paid), Math.max(0, round2(refundAmount)));
+  const refund = Math.min(
+    refundableAmount(stay, paid),
+    Math.max(0, round2(refundAmount)),
+  );
   const netPaid = round2(paid - refund);
 
   return {
@@ -109,40 +138,69 @@ export function deriveTotals({ totalStay, totalPaid, refundAmount = 0 }) {
   };
 }
 
-// Recomputes and persists totalPaid / balance / settlementStatus for one
-// patient from BOTH sources. Call inside a transaction after anything that
-// touches payments or charges.
+// Recomputes and persists totalPaid, the legacy mode columns, balance and
+// settlementStatus for one patient, from the ledger. Call inside a
+// transaction after anything that touches payments or charges.
 //
-// `overrides` lets a caller supply figures that are being written in the
-// same transaction and so aren't in the database yet — the admission form
-// passing its new deposit/cash/upi/card and totalStay, for example.
+// `overrides` lets a caller supply figures being written in the same
+// transaction that aren't in the database yet — the admission form passing
+// its new totalStay, for example.
 export async function recalcPatientTotals(tx, patientId, overrides = {}) {
   const patient = await tx.iPD_Patient.findUnique({ where: { id: patientId } });
   if (!patient) {
     throw Object.assign(new Error("Patient not found"), { status: 404 });
   }
 
-  const advances = sumAdvances({
-    deposit: overrides.deposit ?? patient.deposit,
-    cash: overrides.cash ?? patient.cash,
-    upi: overrides.upi ?? patient.upi,
-    card: overrides.card ?? patient.card,
+  const payments = await tx.iPD_Payment.findMany({
+    where: { patientId },
+    select: { amount: true, method: true },
   });
-  const ledger = await sumLedger(tx, patientId);
 
   const totals = deriveTotals({
     totalStay: overrides.totalStay ?? patient.totalStay,
-    totalPaid: round2(advances + ledger),
+    totalPaid: round2(payments.reduce((s, p) => s + (Number(p.amount) || 0), 0)),
     refundAmount: overrides.refundAmount ?? patient.refundAmount ?? 0,
   });
 
   return tx.iPD_Patient.update({
     where: { id: patientId },
     data: {
+      ...legacyPaymentColumns(payments),
       totalPaid: totals.totalPaid,
       refundAmount: totals.refundAmount,
       balance: totals.balance,
       settlementStatus: totals.settlementStatus,
     },
   });
+}
+
+// Normalises one payment row off a request body. Returns null for a row
+// with no usable amount, so blank rows left in the form are simply dropped.
+export function normalisePayment(row) {
+  const amount = round2(row?.amount);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+
+  const method = PAYMENT_METHODS.includes(row.method) ? row.method : "CASH";
+  let date = row.paymentDate ? new Date(row.paymentDate) : null;
+  if (!date || Number.isNaN(date.getTime())) date = new Date();
+
+  return {
+    id: row.id || null,
+    amount,
+    method,
+    // Only meaningful for OTHER; cleared otherwise so a leftover label from
+    // switching the dropdown can't linger on the record.
+    methodOther:
+      method === "OTHER" ? row.methodOther?.trim().slice(0, 100) || null : null,
+    referenceNumber: row.referenceNumber?.trim().slice(0, 100) || null,
+    notes: row.notes?.trim().slice(0, 500) || null,
+    paymentDate: date,
+  };
+}
+
+// How a payment's mode should read on screen and on a printed bill.
+export function methodLabel(payment) {
+  if (!payment) return "";
+  if (payment.method === "OTHER") return payment.methodOther || "Other";
+  return METHOD_LABELS[payment.method] || payment.method || "";
 }

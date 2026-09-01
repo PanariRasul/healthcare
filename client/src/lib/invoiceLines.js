@@ -7,6 +7,48 @@
 
 import { fmtDate } from "./dateFormat";
 
+// Values match the PaymentMethod enum in schema.prisma.
+const METHOD_LABELS = {
+  CASH: "Cash",
+  UPI: "UPI",
+  CARD: "Card",
+  BANK_TRANSFER: "Bank Transfer",
+  OTHER: "Other",
+};
+
+/** How a payment's mode should read on screen and on a printed bill. */
+export function methodLabel(payment) {
+  if (!payment) return "";
+  if (payment.method === "OTHER") return payment.methodOther || "Other";
+  return METHOD_LABELS[payment.method] || payment.method || "";
+}
+
+/**
+ * Normalises a patient's or an invoice's payment rows into what the bill
+ * prints: one dated line per payment, oldest first, blanks dropped.
+ */
+export function buildPaymentRows(payments = []) {
+  return (Array.isArray(payments) ? payments : [])
+    .map((pm, i) => ({
+      key: pm.id || `pm-${i}`,
+      amount: Number(pm.amount) || 0,
+      paymentDate: pm.paymentDate || null,
+      label: methodLabel(pm),
+      referenceNumber: pm.referenceNumber || "",
+    }))
+    .filter((pm) => pm.amount > 0)
+    .sort((a, b) => new Date(a.paymentDate || 0) - new Date(b.paymentDate || 0));
+}
+
+/** Total of a set of payment rows. */
+export function sumPayments(payments = []) {
+  return (
+    Math.round(
+      buildPaymentRows(payments).reduce((s, pm) => s + pm.amount, 0) * 100,
+    ) / 100
+  );
+}
+
 let seq = 0;
 export const nextLineId = () => `line-${Date.now()}-${seq++}`;
 

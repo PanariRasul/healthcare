@@ -12,6 +12,17 @@
 //   a freshly-calculated number every time you clicked Edit. Press the
 //   "Manual · Auto = N" button on the row to hand it back to the dates.
 //
+// PAYMENTS RECEIVED
+//   A dated list, one row per payment: amount, date, and mode (Cash / UPI /
+//   Card / Bank Transfer / Other, where Other takes a free-text name). Press
+//   "Add Payment" for each further instalment. These rows are the IPD_Payment
+//   ledger — the same records the Payments screen shows — so there is one
+//   history of money received rather than two.
+//
+//   This replaced four flat boxes (Deposit / Cash / UPI / Card) that held one
+//   amount per mode and no dates, which meant an invoice could never list
+//   deposits by date and a second cash payment overwrote the first.
+//
 // REFUND
 //   Editable right here, in Payment Details. Whatever is saved flows onto
 //   the patient's draft invoice automatically, so the refund shows on the
@@ -132,6 +143,26 @@ const REFUND_METHODS = [
   "Other",
 ];
 
+// Values match the PaymentMethod enum in schema.prisma.
+const PAYMENT_MODES = [
+  { value: "CASH", label: "Cash" },
+  { value: "UPI", label: "UPI" },
+  { value: "CARD", label: "Card" },
+  { value: "BANK_TRANSFER", label: "Bank Transfer" },
+  { value: "OTHER", label: "Other" },
+];
+
+let paymentSeq = 0;
+const newPaymentRow = () => ({
+  key: `pay-${Date.now()}-${paymentSeq++}`,
+  id: null, // set once saved, so edits update the row instead of replacing it
+  amount: "",
+  paymentDate: todayISO(),
+  method: "CASH",
+  methodOther: "",
+  referenceNumber: "",
+});
+
 const newChargeRow = () => ({
   id: `charge-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
   fromDate: todayISO(),
@@ -151,10 +182,7 @@ const defaultForm = {
   address: "",
   admissionDate: todayISO(),
   admissionTime: new Date().toTimeString().slice(0, 5),
-  deposit: "",
-  cash: "",
-  upi: "",
-  card: "",
+  payments: [newPaymentRow()],
   refundAmount: "",
   refundReason: "",
   refundDate: "",
@@ -187,7 +215,20 @@ export default function IPDPatientForm({ editPatient, onDone }) {
       ...editPatient,
       admissionDate: toISODate(editPatient.admissionDate),
       dischargeDate: toISODate(editPatient.dischargeDate),
-      card: editPatient.card || 0,
+
+      // Every payment on this patient's ledger, including any added from
+      // the Payments screen — this form owns the whole list.
+      payments: (editPatient.payments || []).length
+        ? editPatient.payments.map((pm, i) => ({
+          key: pm.id || `pay-${i}`,
+          id: pm.id || null,
+          amount: pm.amount ?? "",
+          paymentDate: toISODate(pm.paymentDate),
+          method: pm.method || "CASH",
+          methodOther: pm.methodOther || "",
+          referenceNumber: pm.referenceNumber || "",
+        }))
+        : [newPaymentRow()],
 
       refundAmount: editPatient.refundAmount ? String(editPatient.refundAmount) : "",
       refundReason: editPatient.refundReason || "",
@@ -232,13 +273,34 @@ export default function IPDPatientForm({ editPatient, onDone }) {
 
   const set = (field) => (val) => setForm((f) => ({ ...f, [field]: val }));
 
-  const deposit = parseFloat(form.deposit) || 0;
-  const cash = parseFloat(form.cash) || 0;
-  const upi = parseFloat(form.upi) || 0;
-  const card = parseFloat(form.card) || 0;
-  const totalPaidAdvances = deposit + cash + upi + card;
+  // Everything the patient has handed over, summed from the dated rows.
+  const totalPaidAdvances = form.payments.reduce(
+    (s, pm) => s + (parseFloat(pm.amount) || 0),
+    0,
+  );
 
   const refundAmount = Math.max(0, parseFloat(form.refundAmount) || 0);
+
+  // ---- payments received --------------------------------------------------
+
+  const updatePayment = (key, field, val) =>
+    setForm((f) => ({
+      ...f,
+      payments: f.payments.map((pm) =>
+        pm.key === key ? { ...pm, [field]: val } : pm,
+      ),
+    }));
+
+  const addPayment = () =>
+    setForm((f) => ({ ...f, payments: [...f.payments, newPaymentRow()] }));
+
+  const removePayment = (key) =>
+    setForm((f) => {
+      const rest = f.payments.filter((pm) => pm.key !== key);
+      // Never leave the section completely empty — an blank row is clearer
+      // than a bare "Add Payment" button with nothing above it.
+      return { ...f, payments: rest.length ? rest : [newPaymentRow()] };
+    });
 
   // ---- per-day charges ----------------------------------------------------
 
@@ -387,6 +449,19 @@ export default function IPDPatientForm({ editPatient, onDone }) {
       return;
     }
 
+    const unnamedOther = form.payments.find(
+      (pm) =>
+        (parseFloat(pm.amount) || 0) > 0 &&
+        pm.method === "OTHER" &&
+        !pm.methodOther.trim(),
+    );
+    if (unnamedOther) {
+      setError(
+        'One payment is set to "Other" without a mode name. Type what it was — cheque, insurance, and so on.',
+      );
+      return;
+    }
+
     if (overRefunded > 0) {
       setError(
         maxRefund === 0
@@ -401,10 +476,19 @@ export default function IPDPatientForm({ editPatient, onDone }) {
     const payload = {
       ...form,
       age: parseInt(form.age),
-      deposit,
-      cash,
-      upi,
-      card,
+      // Rows with no amount are dropped server-side too, but filtering here
+      // keeps the request honest about what is actually being saved.
+      payments: form.payments
+        .filter((pm) => (parseFloat(pm.amount) || 0) > 0)
+        .map((pm) => ({
+          id: pm.id || null,
+          amount: parseFloat(pm.amount) || 0,
+          paymentDate: pm.paymentDate || todayISO(),
+          method: pm.method || "CASH",
+          methodOther:
+            pm.method === "OTHER" ? pm.methodOther.trim() || null : null,
+          referenceNumber: pm.referenceNumber.trim() || null,
+        })),
       // Sent on every save so the server can mirror it onto the draft
       // invoice. An amount with no date is stamped today server-side.
       refundAmount,
@@ -553,8 +637,8 @@ export default function IPDPatientForm({ editPatient, onDone }) {
                 </label>
                 <div
                   className={`px-3 py-2 rounded-xl text-xs font-extrabold border ${editPatient.status === "Discharged"
-                      ? "bg-[#0f4a29]/10 text-[#0f4a29] dark:text-[#52b788] border-[#0f4a29]/20"
-                      : "bg-amber-50 text-amber-700 border-amber-200"
+                    ? "bg-[#0f4a29]/10 text-[#0f4a29] dark:text-[#52b788] border-[#0f4a29]/20"
+                    : "bg-amber-50 text-amber-700 border-amber-200"
                     }`}
                 >
                   {editPatient.dischargeStatus}
@@ -642,8 +726,8 @@ export default function IPDPatientForm({ editPatient, onDone }) {
                       onChange={(e) => updateCharge(i, "days", e.target.value)}
                       placeholder="0"
                       className={`w-full bg-white dark:bg-slate-800 border rounded-xl px-2.5 py-1.5 text-xs font-medium text-slate-800 dark:text-white focus:outline-none focus:border-[#0f4a29] ${overridden
-                          ? "border-amber-300 dark:border-amber-700"
-                          : "border-slate-200 dark:border-slate-700"
+                        ? "border-amber-300 dark:border-amber-700"
+                        : "border-slate-200 dark:border-slate-700"
                         }`}
                     />
                     {overridden ? (
@@ -776,8 +860,8 @@ export default function IPDPatientForm({ editPatient, onDone }) {
                                   updateAdditionalCharge(c.id, "chargeType", opt.v)
                                 }
                                 className={`px-2.5 py-1.5 rounded-xl text-[10px] font-extrabold border transition-all whitespace-nowrap ${c.chargeType === opt.v
-                                    ? "bg-[#0f4a29] text-white border-[#0f4a29]"
-                                    : "bg-white dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700"
+                                  ? "bg-[#0f4a29] text-white border-[#0f4a29]"
+                                  : "bg-white dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700"
                                   }`}
                               >
                                 {opt.label}
@@ -917,36 +1001,156 @@ export default function IPDPatientForm({ editPatient, onDone }) {
           </div>
         </SectionCard>
 
-        <SectionCard title="Payment Details" icon={CreditCard}>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <FormInput
-              label="Deposit (₹)"
-              type="number"
-              value={form.deposit}
-              onChange={set("deposit")}
-              placeholder="0.00"
-            />
-            <FormInput
-              label="Cash (₹)"
-              type="number"
-              value={form.cash}
-              onChange={set("cash")}
-              placeholder="0.00"
-            />
-            <FormInput
-              label="UPI (₹)"
-              type="number"
-              value={form.upi}
-              onChange={set("upi")}
-              placeholder="0.00"
-            />
-            <FormInput
-              label="Card (₹)"
-              type="number"
-              value={form.card}
-              onChange={set("card")}
-              placeholder="0.00"
-            />
+        <SectionCard title="Payments Received" icon={CreditCard}>
+          <div className="space-y-3">
+            <div className="bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 rounded-2xl px-3.5 py-2.5">
+              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                One row per payment, in the order the money came in. Each has
+                its own date and mode, so the invoice can list deposits by
+                date and the refund is measured against the real total. Press{" "}
+                <strong className="text-slate-800 dark:text-slate-200">
+                  Add Payment
+                </strong>{" "}
+                for each further instalment. These are the same records the
+                Payments screen shows.
+              </p>
+            </div>
+
+            {form.payments.map((pm, i) => {
+              const isOther = pm.method === "OTHER";
+              return (
+                <div
+                  key={pm.key}
+                  className="bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-slate-800 p-3 space-y-2"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                      Payment {i + 1}
+                      {pm.id ? "" : " · new"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removePayment(pm.key)}
+                      title="Remove this payment"
+                      className="text-rose-500 hover:text-rose-700"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
+                        Amount (₹)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={pm.amount}
+                        onChange={(e) =>
+                          updatePayment(pm.key, "amount", e.target.value)
+                        }
+                        placeholder="0.00"
+                        className={fieldCls}
+                      />
+                    </div>
+
+                    <DateField
+                      label="Date of Payment"
+                      value={pm.paymentDate}
+                      onChange={(v) => updatePayment(pm.key, "paymentDate", v)}
+                    />
+
+                    <div>
+                      <label className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
+                        Mode of Payment
+                      </label>
+                      <select
+                        value={pm.method}
+                        onChange={(e) =>
+                          updatePayment(pm.key, "method", e.target.value)
+                        }
+                        className={fieldCls}
+                      >
+                        {PAYMENT_MODES.map((m) => (
+                          <option key={m.value} value={m.value}>
+                            {m.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
+                        {isOther ? "Which mode?" : "Reference No."}
+                      </label>
+                      {isOther ? (
+                        <input
+                          value={pm.methodOther}
+                          onChange={(e) =>
+                            updatePayment(pm.key, "methodOther", e.target.value)
+                          }
+                          placeholder="e.g. Cheque, Insurance"
+                          className={fieldCls}
+                        />
+                      ) : (
+                        <input
+                          value={pm.referenceNumber}
+                          onChange={(e) =>
+                            updatePayment(
+                              pm.key,
+                              "referenceNumber",
+                              e.target.value,
+                            )
+                          }
+                          placeholder="Txn / receipt no. (optional)"
+                          className={fieldCls}
+                        />
+                      )}
+                    </div>
+                  </div>
+
+                  {isOther && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                      <div className="lg:col-start-4">
+                        <label className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
+                          Reference No.
+                        </label>
+                        <input
+                          value={pm.referenceNumber}
+                          onChange={(e) =>
+                            updatePayment(
+                              pm.key,
+                              "referenceNumber",
+                              e.target.value,
+                            )
+                          }
+                          placeholder="Cheque / receipt no. (optional)"
+                          className={fieldCls}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            <div className="flex items-center justify-between gap-3 pt-1">
+              <button
+                type="button"
+                onClick={addPayment}
+                className="flex items-center gap-1.5 text-xs font-extrabold text-[#0f4a29] dark:text-[#52b788]"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add Payment
+              </button>
+              <div className="text-xs font-bold text-slate-500">
+                Total Received:{" "}
+                <span className="text-sm font-extrabold text-slate-900 dark:text-white">
+                  {fmtINR(totalPaidAdvances)}
+                </span>
+              </div>
+            </div>
           </div>
 
           {/* --- Refund: editable here, flows onto the draft invoice --- */}
@@ -962,8 +1166,8 @@ export default function IPDPatientForm({ editPatient, onDone }) {
                     <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium mt-0.5 max-w-xl">
                       Only an overpayment can be refunded — a ₹10,000 deposit
                       against a ₹5,000 bill leaves ₹5,000 to return. Right now
-                      the bill is {fmtINR(grandGrossTotal)} and the patient has
-                      paid {fmtINR(totalHandedOver)}, so{" "}
+                      the bill is {fmtINR(grandGrossTotal)} and the payments
+                      above total {fmtINR(totalHandedOver)}, so{" "}
                       <span className="font-extrabold">
                         {maxRefund > 0
                           ? `${fmtINR(maxRefund)} can be refunded`
@@ -1096,7 +1300,14 @@ export default function IPDPatientForm({ editPatient, onDone }) {
                 {fmtINR(totalPaymentsOverall)}
               </div>
               <div className="text-[9px] font-medium text-slate-400 mt-0.5">
-                Advances: {fmtINR(totalPaidAdvances)} | Addtl Paid:{" "}
+                {form.payments.filter((pm) => (parseFloat(pm.amount) || 0) > 0)
+                  .length || 0}{" "}
+                payment
+                {form.payments.filter((pm) => (parseFloat(pm.amount) || 0) > 0)
+                  .length === 1
+                  ? ""
+                  : "s"}
+                : {fmtINR(totalPaidAdvances)} | Addtl Paid:{" "}
                 {fmtINR(additionalChargesPaid)}
                 {refundAmount > 0 ? ` | Refunded: −${fmtINR(refundAmount)}` : ""}
               </div>
@@ -1104,8 +1315,8 @@ export default function IPDPatientForm({ editPatient, onDone }) {
 
             <div
               className={`rounded-2xl p-3 border ${estimatedBalance > 0
-                  ? "bg-rose-50 border-rose-200 dark:bg-rose-950/20 dark:border-rose-900/30"
-                  : "bg-[#0f4a29]/10 border-[#0f4a29]/20"
+                ? "bg-rose-50 border-rose-200 dark:bg-rose-950/20 dark:border-rose-900/30"
+                : "bg-[#0f4a29]/10 border-[#0f4a29]/20"
                 }`}
             >
               <div className="text-[10px] font-bold uppercase text-slate-400">
@@ -1113,8 +1324,8 @@ export default function IPDPatientForm({ editPatient, onDone }) {
               </div>
               <div
                 className={`font-extrabold text-sm ${estimatedBalance > 0
-                    ? "text-rose-600 dark:text-rose-400"
-                    : "text-[#0f4a29] dark:text-[#52b788]"
+                  ? "text-rose-600 dark:text-rose-400"
+                  : "text-[#0f4a29] dark:text-[#52b788]"
                   }`}
               >
                 {fmtINR(Math.abs(estimatedBalance))}

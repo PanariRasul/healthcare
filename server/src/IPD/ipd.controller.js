@@ -20,11 +20,10 @@ import {
 // see the header of ipdTotals.js for why.
 import {
   round2,
-  calcSettlement,
-  sumAdvances,
-  sumLedger,
   deriveTotals,
   checkRefund,
+  normalisePayment,
+  legacyPaymentColumns,
 } from "./ipdTotals.js";
 
 // ---------- helpers ----------
@@ -89,12 +88,14 @@ function readRefund(body) {
   };
 }
 
-// `ledgerPaid` is the sum of this patient's IPD_Payment rows. It is ADDED to
-// the advances typed on the admission form, rather than one replacing the
-// other — see ipdTotals.js. The old code passed the stored totalPaid
-// straight through on update, which meant editing the Deposit box changed
-// nothing and left the record inconsistent with itself.
-function buildPatientData(body, { ledgerPaid = 0 } = {}) {
+// The admission form now sends `payments`: a dated list of what the patient
+// handed over, one row per payment, each with its own amount, date and mode.
+// Those rows ARE the IPD_Payment ledger — the same table the Payments screen
+// writes to — so there is one record of money received rather than two that
+// overwrite each other. The old flat deposit/cash/upi/card boxes couldn't
+// record when a payment arrived, so an invoice could never list deposits by
+// date.
+function buildPatientData(body) {
   const dailyCharges = Array.isArray(body.dailyCharges)
     ? body.dailyCharges
     : [];
@@ -103,17 +104,14 @@ function buildPatientData(body, { ledgerPaid = 0 } = {}) {
     ? body.additionalCharges
     : [];
 
-  const deposit = toNum(body.deposit);
-  const cash = toNum(body.cash);
-  const upi = toNum(body.upi);
-  const card = toNum(body.card);
+  // Blank rows left in the form are dropped rather than saved as ₹0.
+  const payments = (Array.isArray(body.payments) ? body.payments : [])
+    .map(normalisePayment)
+    .filter(Boolean)
+    .sort((a, b) => a.paymentDate - b.paymentDate);
 
   const totalStay = dailyCharges.reduce((s, c) => s + toNum(c.amount), 0);
-
-  // Both sources of money count.
-  const totalPaid = round2(
-    sumAdvances({ deposit, cash, upi, card }) + round2(ledgerPaid),
-  );
+  const totalPaid = round2(payments.reduce((s, p) => s + p.amount, 0));
 
   const dischargeStatus = body.dischargeStatus || "Admitted";
   const status = dischargeStatus === "Discharged" ? "Discharged" : "Admitted";
@@ -151,10 +149,9 @@ function buildPatientData(body, { ledgerPaid = 0 } = {}) {
         ? new Date(body.reminderSentDate)
         : null,
 
-      deposit,
-      cash,
-      upi,
-      card,
+      // Derived from the payment list, never typed in. See
+      // legacyPaymentColumns() for why deposit overlaps the other three.
+      ...legacyPaymentColumns(payments),
       totalPaid,
       totalStay,
       // balance and settlementStatus are set by the caller, which knows the
@@ -208,6 +205,7 @@ function buildPatientData(body, { ledgerPaid = 0 } = {}) {
       paymentStatus: c.paymentStatus || "Pending",
     })),
 
+    payments,
     refund: readRefund(body),
   };
 }
@@ -272,6 +270,9 @@ async function applyIpdMedicineStockChanges(
 
 const patientInclude = {
   dailyCharges: { orderBy: { date: "asc" } },
+  // Oldest first, so the invoice and the details page can list deposits in
+  // the order they were actually received.
+  payments: { orderBy: { paymentDate: "asc" } },
   medicines: {
     include: {
       medicine: { select: { sellingPrice: true } },
@@ -389,6 +390,9 @@ export async function getStats(req, res) {
     ]);
 
     const totalBalance = admittedPatients.reduce((s, p) => s + p.balance, 0);
+    // deposit is now the total of every payment on a patient's ledger, and
+    // cash/upi/card break that same total down by mode — see
+    // legacyPaymentColumns() in ipdTotals.js. Don't add them together.
     const totalDeposits = allPatients.reduce((s, p) => s + p.deposit, 0);
     const totalCash = allPatients.reduce((s, p) => s + p.cash, 0);
     const totalUpi = allPatients.reduce((s, p) => s + p.upi, 0);
@@ -417,7 +421,7 @@ export async function getStats(req, res) {
 
 export async function createPatient(req, res) {
   try {
-    const { flat, dailyCharges, medicines, additionalCharges, refund } =
+    const { flat, dailyCharges, medicines, additionalCharges, payments, refund } =
       buildPatientData(req.body);
 
     const refundData = refund || {
@@ -463,6 +467,12 @@ export async function createPatient(req, res) {
             additionalCharges: {
               create: additionalCharges,
             },
+
+            // The form's "Payments Received" rows go straight into the
+            // IPD_Payment ledger — the same table the Payments screen uses.
+            payments: {
+              create: payments.map(({ id, ...row }) => row),
+            },
           },
           include: patientInclude,
         });
@@ -501,12 +511,8 @@ export async function updatePatient(req, res) {
       return res.status(404).json({ message: "Patient not found" });
     }
 
-    // Payments recorded on the Payments screen are added to the advances
-    // typed on this form; neither erases the other.
-    const ledgerPaid = await sumLedger(prisma, id);
-
-    const { flat, dailyCharges, medicines, additionalCharges, refund } =
-      buildPatientData(req.body, { ledgerPaid });
+    const { flat, dailyCharges, medicines, additionalCharges, payments, refund } =
+      buildPatientData(req.body);
 
     // The admission edit form now edits the refund directly. When the client
     // didn't send the field at all (an older build, or a partial update),
@@ -540,6 +546,22 @@ export async function updatePatient(req, res) {
           newMedicines: medicines,
           contextLabel: `IPD patient ${existing.name} (${existing.serialNumber})`,
         });
+
+        // Payments are diffed by id rather than wiped and recreated, so a
+        // row keeps its identity (and its createdAt) across edits, and a
+        // payment added from the Payments screen isn't silently duplicated.
+        // Rows the user removed from the form are deleted.
+        const keepIds = payments.map((p) => p.id).filter(Boolean);
+        await tx.iPD_Payment.deleteMany({
+          where: { patientId: id, id: { notIn: keepIds.length ? keepIds : ["__none__"] } },
+        });
+        for (const { id: rowId, ...row } of payments) {
+          if (rowId) {
+            await tx.iPD_Payment.update({ where: { id: rowId }, data: row });
+          } else {
+            await tx.iPD_Payment.create({ data: { ...row, patientId: id } });
+          }
+        }
 
         await tx.iPD_DailyCharge.deleteMany({ where: { patientId: id } });
         await tx.iPD_Medicine.deleteMany({ where: { patientId: id } });

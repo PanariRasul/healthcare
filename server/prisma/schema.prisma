@@ -275,6 +275,7 @@ model IPD_Payment {
   method          PaymentMethod
   referenceNumber String?
   notes           String?
+  methodOther     String?
   paymentDate     DateTime      @default(now())
   patientId       String
   createdAt       DateTime      @default(now())
@@ -352,6 +353,7 @@ model Invoice {
   paid          Float   @default(0)
   balance       Float   @default(0)
   paymentMethod String?
+  payments      Json @default("[]")
   notes         String?
 
   // Staff member who generated this invoice. Kept as plain fields (not a

@@ -74,7 +74,7 @@ import {
   toISODate,
   todayISO,
 } from "../lib/dateFormat";
-import { buildLineItems } from "../lib/invoiceLines";
+import { buildLineItems, buildPaymentRows, sumPayments } from "../lib/invoiceLines";
 
 // ---------------------------------------------------------------------------
 // Clinic letterhead — edit these to match your actual clinic details/logo.
@@ -226,6 +226,10 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
   const [paymentMethod, setPaymentMethod] = useState("Cash");
   const [notes, setNotes] = useState("");
 
+  // Dated list of what the patient handed over. Drives the "Payments
+  // Received" block on the bill and, for IPD, the Paid figure itself.
+  const [payments, setPayments] = useState([]);
+
   // --- Refund (IPD) ---
   const [refundAmount, setRefundAmount] = useState(0);
   const [refundReason, setRefundReason] = useState("");
@@ -274,6 +278,7 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
     setDiscount(inv.discount || 0);
     setGstPercent(inv.gstPercent || 0);
     setPaid(inv.paid || 0);
+    setPayments(Array.isArray(inv.payments) ? inv.payments : []);
     setPaymentMethod(inv.paymentMethod || "Cash");
     setNotes(inv.notes || "");
     setRefundAmount(inv.refundAmount || 0);
@@ -319,6 +324,12 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
           // it was recorded after this invoice was last saved. Without this
           // the modal would keep showing a stale zero.
           if (isIPD && existing.status !== "FINALIZED") {
+            // Payments and the refund both live on the patient record and
+            // can change after the invoice was last saved, so a draft
+            // always re-reads them.
+            setPayments(data.payments || []);
+            setPaid(data.totalPaid || 0);
+
             const patientRefund = Number(data?.refundAmount) || 0;
             const invoiceRefund = Number(existing.refundAmount) || 0;
             applyRefundFromPatient(data);
@@ -357,11 +368,13 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
     const items = buildLineItems(data, type);
 
     if (isIPD) {
+      setPayments(data.payments || []);
       setPaid(data.totalPaid || 0);
       setPaymentMethod(guessPaymentMethod(data, true));
       // A refund already recorded against the patient carries onto the bill.
       applyRefundFromPatient(data);
     } else {
+      setPayments([]);
       setPaid(data.total || 0);
       setPaymentMethod(guessPaymentMethod(data, false));
       setRefundAmount(0);
@@ -439,7 +452,12 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
   const taxableBase = Math.max(0, subtotal - discountVal);
   const gstVal = round2((taxableBase * (Number(gstPercent) || 0)) / 100);
   const grandTotal = round2(taxableBase + gstVal);
-  const paidVal = Number(paid) || 0;
+  // For IPD the Paid figure is the sum of the dated payments — it can't be
+  // typed over, because the payments themselves are the record. OPD has no
+  // payment ledger yet, so its Paid box stays editable.
+  const paymentRows = buildPaymentRows(payments);
+  const hasPaymentRows = paymentRows.length > 0;
+  const paidVal = hasPaymentRows ? sumPayments(payments) : Number(paid) || 0;
   const refundVal = Math.max(0, Number(refundAmount) || 0);
   // Money given back raises what's still owed.
   const netPaid = round2(paidVal - refundVal);
@@ -471,20 +489,23 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
   const settlementSentence = (() => {
     const bill = fmtINR(grandTotal);
     const paidTxt = fmtINR(paidVal);
+    const paidWhat = hasPaymentRows
+      ? `${paymentRows.length} payment${paymentRows.length === 1 ? "" : "s"} totalling ${paidTxt}`
+      : paidTxt;
     if (!showRefund) {
       if (balance > 0)
-        return `Bill ${bill}. Patient has paid ${paidTxt}, so ${fmtINR(balance)} is still to collect.`;
+        return `Bill ${bill}. Patient has paid ${paidWhat}, so ${fmtINR(balance)} is still to collect.`;
       if (balance < 0)
-        return `Bill ${bill}. Patient has paid ${paidTxt} — ${fmtINR(Math.abs(balance))} more than the bill. Record a refund if that money is going back.`;
-      return `Bill ${bill}, paid in full. Neither side owes the other anything.`;
+        return `Bill ${bill}. Patient has paid ${paidWhat} — ${fmtINR(Math.abs(balance))} more than the bill. Record a refund if that money is going back.`;
+      return `Bill ${bill}, paid in full (${paidWhat}). Neither side owes the other anything.`;
     }
     const refundTxt = fmtINR(refundVal);
     const keptTxt = fmtINR(netPaid);
     if (balance > 0)
-      return `Bill ${bill}. Patient paid ${paidTxt} and ${refundTxt} was returned, so the clinic has kept ${keptTxt} — ${fmtINR(balance)} is still to collect.`;
+      return `Bill ${bill}. Patient paid ${paidWhat} and ${refundTxt} was returned, so the clinic has kept ${keptTxt} — ${fmtINR(balance)} is still to collect.`;
     if (balance < 0)
-      return `Bill ${bill}. Patient paid ${paidTxt} and ${refundTxt} was returned, leaving ${keptTxt} held — ${fmtINR(Math.abs(balance))} more than the bill.`;
-    return `Bill ${bill}. Patient paid ${paidTxt}, the extra ${refundTxt} was returned, and the ${keptTxt} kept covers the bill exactly. Neither side owes the other anything.`;
+      return `Bill ${bill}. Patient paid ${paidWhat} and ${refundTxt} was returned, leaving ${keptTxt} held — ${fmtINR(Math.abs(balance))} more than the bill.`;
+    return `Bill ${bill}. Patient paid ${paidWhat}, the extra ${refundTxt} was returned, and the ${keptTxt} kept covers the bill exactly. Neither side owes the other anything.`;
   })();
 
   function buildPayload(includePatient) {
@@ -501,6 +522,14 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
       gstAmount: gstVal,
       grandTotal,
       paid: paidVal,
+      // Snapshot, so a finalized bill reprints the exact payment list it
+      // was issued with even if the patient's ledger changes later.
+      payments: paymentRows.map((pm) => ({
+        amount: pm.amount,
+        paymentDate: pm.paymentDate,
+        method: pm.label,
+        referenceNumber: pm.referenceNumber || null,
+      })),
       balance,
       paymentMethod,
       notes,
@@ -1349,29 +1378,64 @@ export default function InvoiceModal({ type, patient = null, onClose }) {
                   </div>
 
                   {/* --- What the patient handed over --- */}
-                  <div className="flex justify-between items-center pt-1.5 mt-1.5 border-t border-slate-200 dark:border-slate-700">
-                    <span className="text-slate-500">
-                      Paid by Patient
-                      <span className="block text-[9px] text-slate-400 font-medium leading-tight">
-                        Deposit + cash + UPI + card
-                      </span>
-                    </span>
-                    {isLocked ? (
-                      <span className="font-extrabold">{fmtINR(paidVal)}</span>
-                    ) : (
-                      <>
-                        <input
-                          type="number"
-                          value={paid}
-                          onChange={(e) => setPaid(e.target.value)}
-                          className={`w-24 ${inputCls} text-right`}
-                        />
-                        <span className="hidden print:inline-block font-extrabold text-slate-900">
-                          {fmtINR(paidVal)}
+                  {/* Each payment on its own dated line, oldest first, then
+                      the total. Reading the refund against a single "Paid"
+                      figure gave no way to see when the money arrived or
+                      how it was taken. */}
+                  {hasPaymentRows ? (
+                    <>
+                      <div className="pt-1.5 mt-1.5 border-t border-slate-200 dark:border-slate-700">
+                        <span className="text-slate-500 text-[10px] uppercase font-bold tracking-wide">
+                          Payments Received
                         </span>
-                      </>
-                    )}
-                  </div>
+                      </div>
+                      {paymentRows.map((pm) => (
+                        <div key={pm.key} className="flex justify-between gap-2">
+                          <span className="text-slate-500 min-w-0">
+                            {fmtDate(pm.paymentDate)}
+                            <span className="text-slate-400">
+                              {pm.label ? ` · ${pm.label}` : ""}
+                              {pm.referenceNumber
+                                ? ` · ${pm.referenceNumber}`
+                                : ""}
+                            </span>
+                          </span>
+                          <span className="font-extrabold shrink-0">
+                            {fmtINR(pm.amount)}
+                          </span>
+                        </div>
+                      ))}
+                      <div className="flex justify-between border-t border-slate-200 dark:border-slate-700 pt-1 mt-1">
+                        <span className="font-extrabold">
+                          Total Deposits
+                          <span className="block text-[9px] text-slate-400 font-medium leading-tight">
+                            {paymentRows.length} payment
+                            {paymentRows.length === 1 ? "" : "s"}
+                          </span>
+                        </span>
+                        <span className="font-extrabold">{fmtINR(paidVal)}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex justify-between items-center pt-1.5 mt-1.5 border-t border-slate-200 dark:border-slate-700">
+                      <span className="text-slate-500">Paid by Patient</span>
+                      {isLocked ? (
+                        <span className="font-extrabold">{fmtINR(paidVal)}</span>
+                      ) : (
+                        <>
+                          <input
+                            type="number"
+                            value={paid}
+                            onChange={(e) => setPaid(e.target.value)}
+                            className={`w-24 ${inputCls} text-right`}
+                          />
+                          <span className="hidden print:inline-block font-extrabold text-slate-900">
+                            {fmtINR(paidVal)}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  )}
 
                   {/* Refund rows appear only when money actually went back. */}
                   {showRefund && (

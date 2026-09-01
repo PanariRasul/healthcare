@@ -22,7 +22,7 @@ function isSingleInvoiceType(t) {
 // Thrown for pharmacy-stock problems hit while saving a PHARMACY invoice
 // (missing medicine, not enough stock left). Caught separately so the route
 // can answer 400 instead of a generic 500.
-class StockError extends Error {}
+class StockError extends Error { }
 
 function toNum(v) {
   const n = parseFloat(v);
@@ -381,6 +381,11 @@ export async function createInvoice(req, res) {
       patientId,
       patientName,
       lineItems,
+      // Dated list of what the patient handed over, so the bill can print
+      // "Payments Received" by date with a total. Snapshotted here rather
+      // than re-read from the patient, so a reprint of a finalized invoice
+      // always matches the document that was issued.
+      payments: Array.isArray(req.body.payments) ? req.body.payments : [],
       ...totals,
       paymentMethod: paymentMethod || null,
       notes: notes || null,
@@ -454,6 +459,9 @@ export async function updateInvoice(req, res) {
 
     const data = {
       lineItems,
+      payments: Array.isArray(req.body.payments)
+        ? req.body.payments
+        : existing.payments || [],
       ...normaliseTotals(req.body),
       paymentMethod: paymentMethod || null,
       notes: notes || null,
@@ -671,9 +679,8 @@ export async function markInvoiceReturn(req, res) {
             date: new Date(),
             action: "ADD",
             quantity: u.qty,
-            reason: `Returned by patient — Invoice ${invoice.invoiceNumber}${
-              u.description ? ` (${u.description})` : ""
-            }`,
+            reason: `Returned by patient — Invoice ${invoice.invoiceNumber}${u.description ? ` (${u.description})` : ""
+              }`,
           },
         });
       }

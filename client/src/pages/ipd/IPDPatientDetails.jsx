@@ -20,6 +20,7 @@ import IPDRefundModal from "./IPDRefundModal";
 import { uploadDocument, deleteDocument, fetchPatient } from "./api/ipd.api";
 import { fetchPatientInvoice } from "../../api/invoice.api";
 import { fmtDate, fmtDateTime, fmtINR } from "../../lib/dateFormat";
+import { buildPaymentRows } from "../../lib/invoiceLines";
 import {
   ArrowLeft,
   User,
@@ -96,22 +97,19 @@ function DischargeToggle({ discharged, onClick }) {
       className="flex items-center gap-2.5 px-3 py-2 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-extrabold"
     >
       <DoorOpen
-        className={`w-4 h-4 ${
-          discharged ? "text-[#0f4a29] dark:text-[#52b788]" : "text-slate-400"
-        }`}
+        className={`w-4 h-4 ${discharged ? "text-[#0f4a29] dark:text-[#52b788]" : "text-slate-400"
+          }`}
       />
       <span className="text-slate-700 dark:text-slate-300">
         {discharged ? "Discharged" : "Discharge"}
       </span>
       <span
-        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-          discharged ? "bg-[#0f4a29]" : "bg-slate-300 dark:bg-slate-700"
-        }`}
+        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${discharged ? "bg-[#0f4a29]" : "bg-slate-300 dark:bg-slate-700"
+          }`}
       >
         <span
-          className={`absolute left-0.5 inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-            discharged ? "translate-x-4" : "translate-x-0"
-          }`}
+          className={`absolute left-0.5 inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${discharged ? "translate-x-4" : "translate-x-0"
+            }`}
         />
       </span>
     </button>
@@ -210,6 +208,8 @@ export default function IPDPatientDetails({
   };
 
   const dailyCharges = p.dailyCharges || [];
+  // Dated list of what the patient handed over, oldest first.
+  const paymentRows = buildPaymentRows(p.payments || []);
   const additionalCharges = p.additionalCharges || [];
   const hasFollowUp =
     p.followUpDate || p.condition || p.followUpDesc || p.reminderEnabled;
@@ -640,12 +640,43 @@ export default function IPDPatientDetails({
         </SectionCard>
 
         <SectionCard title="Payment Information" icon={CreditCard}>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-            <StatTile label="Deposit" val={fmtINR(p.deposit)} />
-            <StatTile label="Cash" val={fmtINR(p.cash)} />
-            <StatTile label="UPI" val={fmtINR(p.upi)} />
-            <StatTile label="Card" val={fmtINR(p.card)} />
-          </div>
+          {/* Every payment, in the order it came in. The old four tiles
+              (Deposit / Cash / UPI / Card) held one amount per mode with no
+              dates, so a second cash payment overwrote the first and there
+              was nothing to print on the bill. */}
+          {paymentRows.length === 0 ? (
+            <p className="text-xs text-slate-400 text-center py-4 font-medium mb-4 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800">
+              No payments recorded yet.
+            </p>
+          ) : (
+            <div className="space-y-2 mb-4">
+              {paymentRows.map((pm) => (
+                <div
+                  key={pm.key}
+                  className="flex items-center justify-between gap-3 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-slate-800 px-3 py-2.5 text-xs font-medium"
+                >
+                  <div className="min-w-0">
+                    <div className="font-extrabold text-slate-900 dark:text-white">
+                      {fmtDate(pm.paymentDate)}
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-medium">
+                      {pm.label}
+                      {pm.referenceNumber ? ` · ${pm.referenceNumber}` : ""}
+                    </div>
+                  </div>
+                  <div className="font-extrabold text-[#0f4a29] dark:text-[#52b788] shrink-0">
+                    {fmtINR(pm.amount)}
+                  </div>
+                </div>
+              ))}
+              <div className="flex justify-end pt-1 text-xs font-bold text-slate-500">
+                Total Deposits:
+                <span className="ml-1 text-sm font-extrabold text-slate-900 dark:text-white">
+                  {fmtINR(basePaid)}
+                </span>
+              </div>
+            </div>
+          )}
 
           {/* Refund block — only rendered when a refund exists, or when
               there's an overpayment worth flagging. */}
@@ -728,28 +759,28 @@ export default function IPDPatientDetails({
                 {fmtINR(totalPaymentsOverall)}
               </div>
               <div className="text-[9px] font-medium text-slate-400 mt-0.5">
-                Ledger: {fmtINR(basePaid)} | Addtl Paid:{" "}
+                {paymentRows.length} payment
+                {paymentRows.length === 1 ? "" : "s"}: {fmtINR(basePaid)} |
+                Addtl Paid:{" "}
                 {fmtINR(additionalChargesPaid)}
                 {hasRefund ? ` | Refunded: −${fmtINR(refundAmount)}` : ""}
               </div>
             </div>
 
             <div
-              className={`rounded-2xl p-3 border ${
-                estimatedBalance > 0
+              className={`rounded-2xl p-3 border ${estimatedBalance > 0
                   ? "bg-rose-50 border-rose-200 dark:bg-rose-950/20 dark:border-rose-900/30"
                   : "bg-[#0f4a29]/10 border-[#0f4a29]/20"
-              }`}
+                }`}
             >
               <div className="text-[10px] font-bold uppercase text-slate-400">
                 {estimatedBalance < 0 ? "Advance Held" : "Estimated Balance Due"}
               </div>
               <div
-                className={`font-extrabold text-sm ${
-                  estimatedBalance > 0
+                className={`font-extrabold text-sm ${estimatedBalance > 0
                     ? "text-rose-600 dark:text-rose-400"
                     : "text-[#0f4a29] dark:text-[#52b788]"
-                }`}
+                  }`}
               >
                 {fmtINR(Math.abs(estimatedBalance))}
               </div>

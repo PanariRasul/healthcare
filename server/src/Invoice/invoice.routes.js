@@ -10,6 +10,9 @@ import {
   updateInvoice,
   finalizeInvoice,
   markInvoiceReturn,
+  listInvoicePayments,
+  addInvoicePayment,
+  deleteInvoicePayment,
 } from "./invoice.controller.js";
 
 const router = Router();
@@ -33,6 +36,14 @@ router.put("/:id", updateInvoice);
 router.patch("/:id/finalize", finalizeInvoice);
 
 router.patch("/:id/return", markInvoiceReturn);
+
+// Part-payments — a patient can settle a bill in instalments, so each amount
+// received is recorded separately and paid/balance are recomputed from the
+// full history. Allowed on a finalized invoice too: locking stops the bill's
+// CONTENT changing, not a pending balance being cleared later.
+router.get("/:id/payments", listInvoicePayments);
+router.post("/:id/payments", addInvoicePayment);
+router.delete("/:id/payments/:paymentId", deleteInvoicePayment);
 
 export default router;
 

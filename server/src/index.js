@@ -31,9 +31,9 @@ app.use("/api/auth", authRoutes);
 // OPD routes
 app.use("/api/opd/patients", opdRoutes);
 // IPD routes
+app.use("/api/ipd/patients", ipdRoutes);
 app.use("/api/ipd", ipdRoutes);
 app.use("/api/ipd-payments", ipdPaymentRoutes);
-
 
 // Pharmacy routes
 app.use("/api/pharmacy/categories", categoryRoutes);

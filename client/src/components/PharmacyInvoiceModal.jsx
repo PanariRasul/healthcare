@@ -25,12 +25,23 @@
 //      patientType: "PHARMACY" — its own invoice number series
 //      (VPC-INV-PHARMACY-000001...), kept fully separate from OPD/IPD
 //      invoice history.
+//
+// Toasts: user-facing feedback for save/update/delete/payment/return
+// actions is handled via react-hot-toast (see the imports below). Make
+// sure `react-hot-toast` is installed (`npm install react-hot-toast`) and
+// that a single <Toaster /> is mounted — it's rendered here inside the
+// modal's portal so it works standalone even if the app root doesn't
+// already mount one. If your app already mounts a global <Toaster /> at
+// the root, you can remove the local one below to avoid duplicates.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import toast, { Toaster } from "react-hot-toast";
 import {
   X,
   Plus,
+  BedDouble,
+  Wallet,
   Trash2,
   Printer,
   Loader2,
@@ -52,6 +63,8 @@ import {
   createInvoice,
   updateInvoice,
   markInvoiceReturn,
+  addInvoicePayment,
+  deleteInvoicePayment,
 } from "../api/invoice.api";
 
 // Clinic details
@@ -101,7 +114,10 @@ const nextRowId = () => `prow-${Date.now()}-${rowSeq++}`;
 let manualSeq = 0;
 const nextManualId = () => `manual-${Date.now()}-${manualSeq++}`;
 
-const blankRow = () => ({
+// `date` is the day THIS line was dispensed. An admitted IPD patient
+// collects medicines across many days and is billed once at discharge, so
+// each line carries its own date instead of inheriting one header date.
+const blankRow = (defaultDate = "") => ({
   id: nextRowId(),
   medicineId: null,
   description: "",
@@ -109,7 +125,27 @@ const blankRow = () => ({
   rate: 0,
   returnedQty: 0,
   maxStock: undefined,
+  date: defaultDate,
 });
+
+// <input type="date"> wants local wall-clock "YYYY-MM-DD". Building it from
+// local parts avoids toISOString()'s timezone shift, which in IST would roll
+// a late-evening bill back to the previous day.
+const toDateInputValue = (d) => {
+  if (!d) return "";
+  const dt = new Date(d);
+  if (Number.isNaN(dt.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
+};
+
+// "19-Aug" — compact enough for the narrow Date column on a half-page bill.
+const fmtShortDate = (d) => {
+  if (!d) return "—";
+  const dt = new Date(d);
+  if (Number.isNaN(dt.getTime())) return "—";
+  return `${String(dt.getDate()).padStart(2, "0")}-${dt.toLocaleString("en-IN", { month: "short" })}`;
+};
 
 // NONE / PARTIAL / FULL -> badge label + color classes for the return status pill.
 const RETURN_STATUS_META = {
@@ -149,7 +185,10 @@ export default function PharmacyInvoiceModal({
     (user?.modules || []).includes("OPD");
 
   const [chosenPatient, setChosenPatient] = useState(null);
-  const [setupTab, setSetupTab] = useState("existing");
+  // "OPD" | "IPD" | "manual" — OPD and IPD are separate tabs rather than one
+  // merged "Existing Patient" list, because mixing the two directories made
+  // it easy to bill the wrong record when a person exists in both.
+  const [setupTab, setSetupTab] = useState(hasOpdAccess ? "OPD" : "IPD");
   const [allPatients, setAllPatients] = useState([]);
   const [patientsLoading, setPatientsLoading] = useState(true);
   const [patientSearch, setPatientSearch] = useState("");
@@ -199,8 +238,11 @@ export default function PharmacyInvoiceModal({
       .finally(() => setPatientsLoading(false));
   }, [hasOpdAccess]);
 
+  // Only the directory for the tab that's open.
+  const patientsForTab = allPatients.filter((p) => p.patientType === setupTab);
+
   const matchingPatients = patientSearch.trim()
-    ? allPatients.filter(
+    ? patientsForTab.filter(
         (p) =>
           p.name.toLowerCase().includes(patientSearch.toLowerCase()) ||
           (p.serialNumber || "")
@@ -208,18 +250,21 @@ export default function PharmacyInvoiceModal({
             .includes(patientSearch.toLowerCase()) ||
           (p.phone || "").includes(patientSearch),
       )
-    : allPatients;
+    : patientsForTab;
 
   const selectExistingPatient = (p) => setChosenPatient(p);
 
   const submitManualPatient = () => {
     setManualFormError("");
     if (!manualForm.name.trim()) {
-      setManualFormError("Customer name is required.");
+      const msg = "Customer name is required.";
+      setManualFormError(msg);
+      toast.error(msg);
       return;
     }
     setChosenPatient({
       __manual: true,
+      patientType: "WALKIN",
       id: nextManualId(),
       name: manualForm.name.trim(),
       age: manualForm.age ? Number(manualForm.age) : null,
@@ -263,6 +308,23 @@ export default function PharmacyInvoiceModal({
   const [paid, setPaid] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState("Cash");
   const [notes, setNotes] = useState("");
+  // Prescribing doctor / prescription reference — printed in the bill ribbon
+  // and stored on the invoice, so a reprint still shows who ordered it.
+  const [doctorName, setDoctorName] = useState("");
+
+  // ---- Part-payments (pay some now, leave the rest pending) ----
+  // The invoice's payment history from the server; `paid` is its rollup.
+  const [payments, setPayments] = useState([]);
+  const [showPaymentPanel, setShowPaymentPanel] = useState(false);
+  const [paymentForm, setPaymentForm] = useState({
+    amount: "",
+    method: "Cash",
+    paymentDate: "",
+    referenceNumber: "",
+    notes: "",
+  });
+  const [savingPayment, setSavingPayment] = useState(false);
+  const [paymentError, setPaymentError] = useState("");
 
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [invoiceDate, setInvoiceDate] = useState(new Date());
@@ -294,6 +356,10 @@ export default function PharmacyInvoiceModal({
     setPaid(0);
     setPaymentMethod("Cash");
     setNotes("");
+    setDoctorName("");
+    setPayments([]);
+    setShowPaymentPanel(false);
+    setPaymentError("");
     setSavedInvoiceId(null);
     setInvoiceDate(new Date());
     setCreatedByDisplay(user?.fullName || "");
@@ -345,11 +411,19 @@ export default function PharmacyInvoiceModal({
       ),
     );
     setActiveSearchRowId(null);
+    toast.success(`${med.drugName} added`);
   };
 
-  const addRow = () => setLineItems((rows) => [...rows, blankRow()]);
-  const removeRow = (id) =>
+  // New lines start on the invoice's own date; change only the ones actually
+  // dispensed on a different day.
+  const addRow = () => {
+    setLineItems((rows) => [...rows, blankRow(toDateInputValue(invoiceDate))]);
+    toast.success("Line item added");
+  };
+  const removeRow = (id) => {
     setLineItems((rows) => rows.filter((r) => r.id !== id));
+    toast.success("Line item removed");
+  };
 
   const subtotal = lineItems.reduce(
     (s, r) => s + (Number(r.qty) || 0) * (Number(r.rate) || 0),
@@ -360,6 +434,23 @@ export default function PharmacyInvoiceModal({
   const grandTotal = Math.max(0, subtotal - discountVal);
   const paidVal = Number(paid) || 0;
   const balance = Math.max(0, Math.round((grandTotal - paidVal) * 100) / 100);
+
+  // Once payment entries exist the server owns `paid`, so the summary reads
+  // from them rather than from the editable Paid box.
+  const paidFromPayments = payments.reduce(
+    (sum, p) => sum + (Number(p.amount) || 0),
+    0,
+  );
+  const effectivePaid = payments.length ? paidFromPayments : paidVal;
+  const effectiveBalance = Math.max(
+    0,
+    Math.round((grandTotal - effectivePaid) * 100) / 100,
+  );
+
+  // "IPD #1042" / "OPD #77" / "Walk-in" — the ribbon used to hardcode OPD.
+  const patientTypeLabel = chosenPatient?.__manual
+    ? "Walk-in Customer"
+    : `${chosenPatient?.patientType || "OPD"} #${chosenPatient?.serialNumber || "—"}`;
 
   function viewPastInvoice(inv) {
     const items = Array.isArray(inv.lineItems) ? inv.lineItems : [];
@@ -372,6 +463,7 @@ export default function PharmacyInvoiceModal({
             qty: it.qty,
             rate: it.rate,
             returnedQty: Number(it.returnedQty) || 0,
+            date: toDateInputValue(it.date),
             maxStock: undefined,
           }))
         : [blankRow()],
@@ -380,6 +472,10 @@ export default function PharmacyInvoiceModal({
     setPaid(inv.paid || 0);
     setPaymentMethod(inv.paymentMethod || "Cash");
     setNotes(inv.notes || "");
+    setDoctorName(inv.doctorName || "");
+    setPayments(Array.isArray(inv.payments) ? inv.payments : []);
+    setShowPaymentPanel(false);
+    setPaymentError("");
     setInvoiceNumber(inv.invoiceNumber);
     setInvoiceDate(inv.createdAt);
     setCreatedByDisplay(inv.createdByName || "—");
@@ -433,6 +529,10 @@ export default function PharmacyInvoiceModal({
     setPaid(0);
     setPaymentMethod("Cash");
     setNotes("");
+    setDoctorName("");
+    setPayments([]);
+    setShowPaymentPanel(false);
+    setPaymentError("");
     setSavedInvoiceId(null);
     setInvoiceDate(new Date());
     setCreatedByDisplay(user?.fullName || "");
@@ -449,9 +549,72 @@ export default function PharmacyInvoiceModal({
       .then((r) => setInvoiceNumber(r.invoiceNumber))
       .catch(() => {});
     setShowHistory(false);
+    toast.success("Started a new invoice");
   }
 
   const savingRef = useRef(false);
+
+  // Records one received amount against the saved invoice. The server
+  // re-derives paid/balance from the full history and returns the updated
+  // invoice, so these figures match what the billing list reads.
+  async function handleAddPayment() {
+    setPaymentError("");
+    const amt = Number(paymentForm.amount);
+    if (!Number.isFinite(amt) || amt <= 0) {
+      const msg = "Enter the amount being paid.";
+      setPaymentError(msg);
+      toast.error(msg);
+      return;
+    }
+    setSavingPayment(true);
+    try {
+      const updated = await addInvoicePayment(savedInvoiceId, {
+        amount: amt,
+        method: paymentForm.method,
+        paymentDate: paymentForm.paymentDate || undefined,
+        referenceNumber: paymentForm.referenceNumber || undefined,
+        notes: paymentForm.notes || undefined,
+        receivedById: user?.id || null,
+        receivedByName: user?.fullName || null,
+      });
+      setPayments(Array.isArray(updated.payments) ? updated.payments : []);
+      setPaid(updated.paid);
+      setPaymentForm({
+        amount: "",
+        method: "Cash",
+        paymentDate: "",
+        referenceNumber: "",
+        notes: "",
+      });
+      toast.success(`Payment of ${fmtINR(amt)} recorded`);
+      if (!chosenPatient.__manual) {
+        fetchPatientInvoices("PHARMACY", chosenPatient.id)
+          .then((invs) => setHistory(invs))
+          .catch(() => {});
+      }
+    } catch (err) {
+      const msg = err.message || "Could not record this payment.";
+      setPaymentError(msg);
+      toast.error(msg);
+    } finally {
+      setSavingPayment(false);
+    }
+  }
+
+  // Removes a mis-keyed entry; the rest are re-totalled server-side.
+  async function handleDeletePayment(paymentId) {
+    setPaymentError("");
+    try {
+      const updated = await deleteInvoicePayment(savedInvoiceId, paymentId);
+      setPayments(Array.isArray(updated.payments) ? updated.payments : []);
+      setPaid(updated.paid);
+      toast.success("Payment removed");
+    } catch (err) {
+      const msg = err.message || "Could not remove this payment.";
+      setPaymentError(msg);
+      toast.error(msg);
+    }
+  }
 
   const printAreaRef = useRef(null);
   const printContentRef = useRef(null);
@@ -492,23 +655,28 @@ export default function PharmacyInvoiceModal({
     };
   }, [fitToHalfPage, resetScale]);
 
-async function handleSave() {
+  async function handleSave() {
     if (savingRef.current) return;
     savingRef.current = true;
     setSaving(true);
     setSaveError("");
     try {
-      const formattedLineItems = lineItems.map(({ medicineId, description, qty, rate }) => {
-        const itemQty = Number(qty) || 0;
-        const itemRate = Number(rate) || 0;
-        return {
-          medicineId: medicineId || null,
-          description,
-          qty: itemQty,
-          rate: itemRate,
-          amount: Number((itemQty * itemRate).toFixed(2)),
-        };
-      });
+      const formattedLineItems = lineItems.map(
+        ({ medicineId, description, qty, rate, date }) => {
+          const itemQty = Number(qty) || 0;
+          const itemRate = Number(rate) || 0;
+          return {
+            medicineId: medicineId || null,
+            description,
+            qty: itemQty,
+            rate: itemRate,
+            amount: Number((itemQty * itemRate).toFixed(2)),
+            // Day this line was dispensed — lets one bill cover medicines
+            // handed over across several days.
+            date: date || null,
+          };
+        },
+      );
 
       const payload = {
         patientType: "PHARMACY",
@@ -524,6 +692,16 @@ async function handleSave() {
         balance: Math.max(0, Number((grandTotal - paidVal).toFixed(2))),
         paymentMethod,
         notes,
+        // Bill date plus a snapshot of the patient details as billed, so a
+        // reprint later still shows what was on the document.
+        invoiceDate: invoiceDate
+          ? new Date(invoiceDate).toISOString()
+          : new Date().toISOString(),
+        patientSource: chosenPatient.patientType || null,
+        patientPhone: chosenPatient.phone || null,
+        patientAge: chosenPatient.age ?? null,
+        patientGender: chosenPatient.gender || null,
+        doctorName: doctorName || null,
         createdById: user?.id || null,
         createdByName: user?.fullName || null,
       };
@@ -531,10 +709,12 @@ async function handleSave() {
       const saved = await createInvoice(payload);
       setSavedInvoiceId(saved.id);
       setInvoiceNumber(saved.invoiceNumber);
-      setInvoiceDate(saved.createdAt);
+      setInvoiceDate(saved.invoiceDate || saved.createdAt);
+      setPayments(Array.isArray(saved.payments) ? saved.payments : []);
       setCreatedByDisplay(saved.createdByName || user?.fullName || "");
       setDiscount(saved.discount);
       setPaid(saved.paid);
+      toast.success(`Invoice ${saved.invoiceNumber || ""} saved`);
 
       if (!chosenPatient.__manual) {
         fetchPatientInvoices("PHARMACY", chosenPatient.id)
@@ -542,7 +722,9 @@ async function handleSave() {
           .catch(() => {});
       }
     } catch (err) {
-      setSaveError(err.message || "Failed to save invoice");
+      const msg = err.message || "Failed to save invoice";
+      setSaveError(msg);
+      toast.error(msg);
     } finally {
       savingRef.current = false;
       setSaving(false);
@@ -555,18 +737,21 @@ async function handleSave() {
     setSaving(true);
     setSaveError("");
     try {
-      const formattedLineItems = lineItems.map(({ medicineId, description, qty, rate, returnedQty }) => {
-        const itemQty = Number(qty) || 0;
-        const itemRate = Number(rate) || 0;
-        return {
-          medicineId: medicineId || null,
-          description,
-          qty: itemQty,
-          rate: itemRate,
-          amount: Number((itemQty * itemRate).toFixed(2)),
-          returnedQty: Number(returnedQty) || 0,
-        };
-      });
+      const formattedLineItems = lineItems.map(
+        ({ medicineId, description, qty, rate, returnedQty, date }) => {
+          const itemQty = Number(qty) || 0;
+          const itemRate = Number(rate) || 0;
+          return {
+            medicineId: medicineId || null,
+            description,
+            qty: itemQty,
+            rate: itemRate,
+            amount: Number((itemQty * itemRate).toFixed(2)),
+            returnedQty: Number(returnedQty) || 0,
+            date: date || null,
+          };
+        },
+      );
 
       const payload = {
         lineItems: formattedLineItems,
@@ -579,10 +764,19 @@ async function handleSave() {
         balance: Math.max(0, Number((grandTotal - paidVal).toFixed(2))),
         paymentMethod,
         notes,
+        invoiceDate: invoiceDate
+          ? new Date(invoiceDate).toISOString()
+          : undefined,
+        patientSource: chosenPatient.patientType || null,
+        patientPhone: chosenPatient.phone || null,
+        patientAge: chosenPatient.age ?? null,
+        patientGender: chosenPatient.gender || null,
+        doctorName: doctorName || null,
       };
 
       const updated = await updateInvoice(savedInvoiceId, payload);
-      setInvoiceDate(updated.createdAt);
+      setInvoiceDate(updated.invoiceDate || updated.createdAt);
+      setPayments(Array.isArray(updated.payments) ? updated.payments : []);
       setDiscount(updated.discount);
       setPaid(updated.paid);
       setLineItems((rows) =>
@@ -591,6 +785,7 @@ async function handleSave() {
           returnedQty: Number(updated.lineItems?.[i]?.returnedQty) || 0,
         })),
       );
+      toast.success(`Invoice ${invoiceNumber || ""} updated`);
 
       if (!chosenPatient.__manual) {
         fetchPatientInvoices("PHARMACY", chosenPatient.id)
@@ -598,7 +793,9 @@ async function handleSave() {
           .catch(() => {});
       }
     } catch (err) {
-      setSaveError(err.message || "Failed to update invoice");
+      const msg = err.message || "Failed to update invoice";
+      setSaveError(msg);
+      toast.error(msg);
     } finally {
       savingRef.current = false;
       setSaving(false);
@@ -623,18 +820,19 @@ async function handleSave() {
       .filter((x) => x.returnQty > 0);
 
     if (items.length === 0) {
-      setReturnError(
-        "Enter how many tablets are being returned for at least one medicine.",
-      );
+      const msg =
+        "Enter how many tablets are being returned for at least one medicine.";
+      setReturnError(msg);
+      toast.error(msg);
       return;
     }
 
     for (const { row, returnQty } of items) {
       const max = maxReturnableFor(row);
       if (returnQty > max) {
-        setReturnError(
-          `"${row.description}" — only ${max} tablet(s) can be returned (sold ${row.qty}, already returned ${row.returnedQty || 0}). Please recheck the count.`,
-        );
+        const msg = `"${row.description}" — only ${max} tablet(s) can be returned (sold ${row.qty}, already returned ${row.returnedQty || 0}). Please recheck the count.`;
+        setReturnError(msg);
+        toast.error(msg);
         return;
       }
     }
@@ -662,8 +860,11 @@ async function handleSave() {
       setReturnQtyByRow({});
       setReturnFormNotes("");
       setShowReturnPanel(false);
+      toast.success("Return recorded and stock updated");
     } catch (err) {
-      setReturnError(err.message || "Failed to process the return.");
+      const msg = err.message || "Failed to process the return.";
+      setReturnError(msg);
+      toast.error(msg);
     } finally {
       setReturning(false);
     }
@@ -677,6 +878,22 @@ async function handleSave() {
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm invoice-modal-backdrop">
+      <Toaster
+        position="top-center"
+        toastOptions={{
+          duration: 3000,
+          style: {
+            fontSize: "12px",
+            fontWeight: 600,
+          },
+          success: {
+            iconTheme: { primary: "#047857", secondary: "#ffffff" },
+          },
+          error: {
+            iconTheme: { primary: "#e11d48", secondary: "#ffffff" },
+          },
+        }}
+      />
       <style>{`
         @media print {
           @page { margin: 0; size: auto; }
@@ -701,6 +918,8 @@ async function handleSave() {
             background: #ffffff !important;
           }
           .no-print { display: none !important; }
+          /* Swaps the editable date input for its compact printed form. */
+          .print-only { display: inline !important; }
           .print-hide { display: none !important; }
           .invoice-print-area input, .invoice-print-area select, .invoice-print-area textarea {
             border: none !important; background: transparent !important;
@@ -754,6 +973,22 @@ async function handleSave() {
                   {showHistory ? "Hide" : "Show"} History
                   {history.length > 0 ? ` (${history.length})` : ""}
                 </button>
+                {savedInvoiceId && (
+                  <button
+                    onClick={() => setShowPaymentPanel((v) => !v)}
+                    title="Record a payment against this invoice"
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-md border text-xs font-bold ${
+                      effectiveBalance > 0
+                        ? "bg-rose-50 hover:bg-rose-100 border-rose-200 text-rose-700"
+                        : "bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700"
+                    }`}
+                  >
+                    <Wallet className="w-4 h-4" />
+                    {effectiveBalance > 0
+                      ? `Pending ${fmtINR(effectiveBalance)}`
+                      : "Fully Paid"}
+                  </button>
+                )}
                 {savedInvoiceId && returnableRows.length > 0 && (
                   <button
                     onClick={() => setShowReturnPanel((v) => !v)}
@@ -774,6 +1009,176 @@ async function handleSave() {
             </button>
           </div>
         </div>
+
+        {chosenPatient && savedInvoiceId && showPaymentPanel && (
+          <div className="no-print mx-4 mt-4 bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <Wallet className="w-4 h-4 text-[#047857]" />
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                Payments
+              </h4>
+            </div>
+            <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
+              The patient doesn't have to clear the whole bill at once. Record
+              whatever they hand over now and the rest stays pending — come back
+              to this invoice any time to add the next instalment.
+            </p>
+
+            <div className="grid grid-cols-3 gap-2">
+              <div className="bg-white border border-slate-200 rounded-md p-2 text-center">
+                <div className="text-[9px] font-bold uppercase text-slate-400">
+                  Invoice Total
+                </div>
+                <div className="text-sm font-bold text-slate-900">
+                  {fmtINR(grandTotal)}
+                </div>
+              </div>
+              <div className="bg-white border border-slate-200 rounded-md p-2 text-center">
+                <div className="text-[9px] font-bold uppercase text-slate-400">
+                  Paid So Far
+                </div>
+                <div className="text-sm font-bold text-[#047857]">
+                  {fmtINR(effectivePaid)}
+                </div>
+              </div>
+              <div className="bg-white border border-slate-200 rounded-md p-2 text-center">
+                <div className="text-[9px] font-bold uppercase text-slate-400">
+                  Still Pending
+                </div>
+                <div
+                  className={`text-sm font-bold ${
+                    effectiveBalance > 0 ? "text-rose-600" : "text-[#047857]"
+                  }`}
+                >
+                  {fmtINR(effectiveBalance)}
+                </div>
+              </div>
+            </div>
+
+            {payments.length > 0 && (
+              <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                {payments.map((pmt) => (
+                  <div
+                    key={pmt.id}
+                    className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-md px-3 py-2"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-slate-900">
+                        {fmtINR(pmt.amount)}{" "}
+                        <span className="text-slate-400 font-medium">
+                          via {pmt.method}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-medium truncate">
+                        {fmtDate(pmt.paymentDate)}
+                        {pmt.referenceNumber
+                          ? ` · Ref ${pmt.referenceNumber}`
+                          : ""}
+                        {pmt.receivedByName
+                          ? ` · by ${pmt.receivedByName}`
+                          : ""}
+                        {pmt.notes ? ` · ${pmt.notes}` : ""}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleDeletePayment(pmt.id)}
+                      title="Remove this payment entry"
+                      className="text-slate-300 hover:text-rose-500 shrink-0"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={paymentForm.amount}
+                onChange={(e) =>
+                  setPaymentForm((f) => ({ ...f, amount: e.target.value }))
+                }
+                placeholder="Amount ₹"
+                className="bg-white border border-slate-200 rounded-md px-2 py-1.5 text-xs font-bold focus:outline-none focus:border-[#047857]"
+              />
+              <select
+                value={paymentForm.method}
+                onChange={(e) =>
+                  setPaymentForm((f) => ({ ...f, method: e.target.value }))
+                }
+                className="bg-white border border-slate-200 rounded-md px-2 py-1.5 text-xs font-medium focus:outline-none focus:border-[#047857]"
+              >
+                {PAYMENT_METHODS.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="date"
+                value={paymentForm.paymentDate}
+                onChange={(e) =>
+                  setPaymentForm((f) => ({ ...f, paymentDate: e.target.value }))
+                }
+                title="Date this money was received (defaults to today)"
+                className="bg-white border border-slate-200 rounded-md px-2 py-1.5 text-xs font-medium focus:outline-none focus:border-[#047857]"
+              />
+              <input
+                value={paymentForm.referenceNumber}
+                onChange={(e) =>
+                  setPaymentForm((f) => ({
+                    ...f,
+                    referenceNumber: e.target.value,
+                  }))
+                }
+                placeholder="UPI / cheque ref"
+                className="bg-white border border-slate-200 rounded-md px-2 py-1.5 text-xs font-medium focus:outline-none focus:border-[#047857]"
+              />
+              <input
+                value={paymentForm.notes}
+                onChange={(e) =>
+                  setPaymentForm((f) => ({ ...f, notes: e.target.value }))
+                }
+                placeholder="Note (optional)"
+                className="bg-white border border-slate-200 rounded-md px-2 py-1.5 text-xs font-medium focus:outline-none focus:border-[#047857]"
+              />
+            </div>
+
+            {paymentError && (
+              <div className="flex items-start gap-2 bg-rose-50 border border-rose-200 rounded-md px-3 py-2 text-rose-600 text-xs font-bold">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                {paymentError}
+              </div>
+            )}
+
+            <div className="flex flex-wrap justify-end gap-2">
+              {effectiveBalance > 0 && (
+                <button
+                  onClick={() =>
+                    setPaymentForm((f) => ({
+                      ...f,
+                      amount: String(effectiveBalance),
+                    }))
+                  }
+                  className="px-4 py-2 rounded-md text-[11px] font-bold border border-slate-200 text-slate-600 hover:border-[#047857]"
+                >
+                  Pay full pending ({fmtINR(effectiveBalance)})
+                </button>
+              )}
+              <button
+                onClick={handleAddPayment}
+                disabled={savingPayment}
+                className="flex items-center gap-1.5 bg-[#047857] hover:bg-[#065f46] text-white text-xs font-bold px-5 py-2 rounded-md disabled:opacity-50"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                {savingPayment ? "Recording..." : "Record Payment"}
+              </button>
+            </div>
+          </div>
+        )}
 
         {chosenPatient && showReturnPanel && (
           <div className="no-print mx-4 mt-4 bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-3">
@@ -873,11 +1278,8 @@ async function handleSave() {
           <div className="p-6 space-y-5">
             <div className="flex gap-1.5 p-1 bg-slate-50 border border-slate-200 rounded-md w-fit">
               {[
-                {
-                  key: "existing",
-                  label: "Existing Patient",
-                  icon: UserSearch,
-                },
+                { key: "OPD", label: "OPD Patient", icon: UserSearch },
+                { key: "IPD", label: "IPD Patient", icon: BedDouble },
                 { key: "manual", label: "New / Walk-in", icon: UserPlus2 },
               ].map((t) => {
                 const Icon = t.icon;
@@ -898,7 +1300,7 @@ async function handleSave() {
               })}
             </div>
 
-            {setupTab === "existing" ? (
+            {setupTab !== "manual" ? (
               <div className="space-y-3">
                 <div className="relative">
                   <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -1164,15 +1566,31 @@ async function handleSave() {
                 <div>
                   <p>
                     <strong>Patient:</strong>{" "}
-                    <span className="font-semibold">{chosenPatient.name}</span>
+                    <span className="font-semibold">
+                      {chosenPatient.name}
+                      {chosenPatient.age || chosenPatient.gender
+                        ? ` (${chosenPatient.age || "—"}${
+                            chosenPatient.gender
+                              ? ` / ${String(chosenPatient.gender).charAt(0)}`
+                              : ""
+                          })`
+                        : ""}
+                    </span>
+                  </p>
+                  {/* This used to hardcode "OPD #..." regardless of origin,
+                      so every IPD patient's bill misidentified them. */}
+                  <p>
+                    <strong>Type:</strong> <span>{patientTypeLabel}</span>
                   </p>
                   <p>
-                    <strong>Type:</strong>{" "}
-                    <span>
-                      {chosenPatient.__manual
-                        ? "Walk-in"
-                        : `OPD #${chosenPatient.serialNumber || "—"}`}
+                    <strong>Phone:</strong>{" "}
+                    <span className="font-mono">
+                      {chosenPatient.phone || "—"}
                     </span>
+                  </p>
+                  <p>
+                    <strong>Doctor / Ref:</strong>{" "}
+                    <span>{doctorName || "—"}</span>
                   </p>
                 </div>
                 <div className="text-right font-mono text-[10px]">
@@ -1184,6 +1602,26 @@ async function handleSave() {
                   </p>
                   <p>
                     <strong>Date:</strong> <span>{fmtDate(invoiceDate)}</span>
+                  </p>
+                  <p>
+                    <strong>Pay Mode:</strong>{" "}
+                    <span>{paymentMethod || "—"}</span>
+                  </p>
+                  {/* Payment standing prints on the bill, so the copy the
+                      patient walks out with states what is still owed. */}
+                  <p
+                    className={
+                      effectiveBalance > 0
+                        ? "font-bold text-rose-600"
+                        : "font-bold text-[#047857]"
+                    }
+                  >
+                    <strong>Status:</strong>{" "}
+                    <span>
+                      {effectiveBalance > 0
+                        ? `${fmtINR(effectivePaid)} paid · ${fmtINR(effectiveBalance)} pending`
+                        : "Fully Paid"}
+                    </span>
                   </p>
                 </div>
               </div>
@@ -1198,6 +1636,9 @@ async function handleSave() {
                       </th>
                       <th className="py-1 px-1.5 border-r border-[#047857]">
                         Medicine Trade Description
+                      </th>
+                      <th className="py-1 px-1.5 text-center border-r border-[#047857] w-20">
+                        Date
                       </th>
                       <th className="py-1 px-1.5 text-center border-r border-[#047857] w-16">
                         Qty
@@ -1296,6 +1737,22 @@ async function handleSave() {
                               </div>
                             )}
                         </td>
+                        {/* Per-line dispense date — editable on screen, and
+                            printed in the compact "19-Aug" form so the column
+                            stays narrow on a half page. */}
+                        <td className="py-1 px-1.5 text-center align-top">
+                          <input
+                            type="date"
+                            value={r.date || ""}
+                            onChange={(e) =>
+                              updateRow(r.id, "date", e.target.value)
+                            }
+                            className="w-full bg-transparent border border-slate-200 rounded px-1 py-0.5 text-[9.5px] font-mono text-center focus:outline-none focus:border-[#047857] no-print"
+                          />
+                          <span className="hidden print-only font-mono text-[10px]">
+                            {fmtShortDate(r.date)}
+                          </span>
+                        </td>
                         <td className="py-1 px-1.5 text-center font-bold font-mono text-[11px] align-top">
                           <input
                             type="number"
@@ -1362,7 +1819,19 @@ async function handleSave() {
                     Terms: Medicines once sold cannot be returned or exchanged.
                   </p>
 
-                  <div className="pt-2 grid grid-cols-2 gap-2 text-xs font-sans pr-4">
+                  <div className="pt-2 grid grid-cols-3 gap-2 text-xs font-sans pr-4 no-print">
+                    <div>
+                      <div className="text-slate-400 text-[9px] uppercase font-bold mb-0.5">
+                        Doctor / Ref
+                      </div>
+                      <input
+                        value={doctorName}
+                        onChange={(e) => setDoctorName(e.target.value)}
+                        placeholder="Dr. name"
+                        title="Prints in the bill ribbon above"
+                        className="w-full bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px] focus:outline-none focus:border-[#047857]"
+                      />
+                    </div>
                     <div>
                       <div className="text-slate-400 text-[9px] uppercase font-bold mb-0.5">
                         Pay Mode

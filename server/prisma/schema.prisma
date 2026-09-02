@@ -344,7 +344,29 @@ model Invoice {
   patientId     String
   patientName   String
 
-  lineItems     Json // [{ description, qty, rate, amount, medicineId?, returnedQty? }]
+  // Where a PHARMACY invoice's patient came from: "OPD" | "IPD" | "WALKIN".
+  // patientType is always "PHARMACY" for pharmacy sales (it drives the
+  // invoice-number series), so without this the origin was lost.
+  patientSource String?
+
+  // Snapshot of the patient's details AS BILLED. Deliberately copied rather
+  // than joined: a reprint years later must show what was on the bill the day
+  // it was issued, even if the patient record has since been edited.
+  patientPhone  String?
+  patientAge    Int?
+  patientGender String?
+  doctorName    String?
+
+  // The date the bill is dated FOR, which is not always when the row was
+  // inserted — a bill written up after the fact carries the real date.
+  // createdAt still records when it was actually saved.
+  invoiceDate DateTime @default(now())
+
+  // [{ description, qty, rate, amount, medicineId?, returnedQty?, date? }]
+  // `date` (YYYY-MM-DD) is the day THAT line was dispensed. An admitted IPD
+  // patient collects medicines across many days and is billed once, so one
+  // date on the header can't describe the bill.
+  lineItems     Json
   subtotal      Float
   discount      Float   @default(0)
   gstPercent    Float   @default(0)
@@ -398,6 +420,8 @@ model Invoice {
   returnedByName String?
 
   createdAt DateTime @default(now())
+
+  @@index([patientType, invoiceDate])
 
   // NOTE: the "one invoice per OPD/IPD patient" rule is enforced in the
   // controller, not by a plain @@unique, because PHARMACY invoices are

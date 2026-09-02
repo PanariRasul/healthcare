@@ -49,8 +49,13 @@ export function fetchPatientInvoices(patientType, patientId) {
 // Every invoice of one type (e.g. all "PHARMACY" invoices), newest first —
 // not scoped to a single patient. Used by the Pharmacy Billing list page.
 // `search` (optional) matches invoice number or patient name.
-export function fetchInvoicesByType(patientType, search = "") {
-  const qs = search ? `?search=${encodeURIComponent(search)}` : "";
+export function fetchInvoicesByType(patientType, search = "", payStatus = "") {
+  const params = new URLSearchParams();
+  if (search) params.set("search", search);
+  // PENDING | PARTLY_PAID | FULLY_PAID — filtering server-side matters now
+  // that an invoice can sit part-paid for days.
+  if (payStatus) params.set("payStatus", payStatus);
+  const qs = params.toString() ? `?${params.toString()}` : "";
   return fetch(`${INVOICES_URL}/type/${patientType}${qs}`).then(handle);
 }
 
@@ -77,4 +82,27 @@ export function finalizeInvoice(id, payload = {}) {
 // returnQty }], notes? }.
 export function markInvoiceReturn(id, payload) {
   return json("PATCH")(`${INVOICES_URL}/${id}/return`, payload);
+}
+
+// --- Part-payments ---------------------------------------------------------
+// A bill doesn't have to be cleared in one go. These record each amount
+// received against an invoice; the server recomputes `paid` and `balance`
+// from the full payment history and returns the updated invoice, so the
+// figures can never drift from what was actually collected.
+
+// The invoice plus its payment history and rollups.
+export function fetchInvoicePayments(id) {
+  return fetch(`${INVOICES_URL}/${id}/payments`).then(handle);
+}
+
+// payload = { amount, method?, paymentDate?, referenceNumber?, notes? }
+export function addInvoicePayment(id, payload) {
+  return json("POST")(`${INVOICES_URL}/${id}/payments`, payload);
+}
+
+// Removes a mis-keyed entry; the remaining ones are re-totalled.
+export function deleteInvoicePayment(id, paymentId) {
+  return fetch(`${INVOICES_URL}/${id}/payments/${paymentId}`, {
+    method: "DELETE",
+  }).then(handle);
 }

@@ -38,12 +38,12 @@ const fmtINR = (n) =>
 const fmtDateTime = (d) =>
   d
     ? new Date(d).toLocaleString("en-IN", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    })
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
     : "—";
 
 function SummaryCard({ icon: Icon, label, value, valueClass }) {
@@ -81,6 +81,9 @@ export default function PharmacyBilling() {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  // An invoice can now sit part-paid for days, so "what still owes money" is
+  // the list reception works from at end of day.
+  const [payFilter, setPayFilter] = useState("");
   const [creating, setCreating] = useState(false);
   const [viewingInvoice, setViewingInvoice] = useState(null);
 
@@ -101,10 +104,21 @@ export default function PharmacyBilling() {
     load();
   }, []);
 
+  const matchesPayFilter = (inv) => {
+    if (!payFilter) return true;
+    const balance = Number(inv.balance) || 0;
+    const paid = Number(inv.paid) || 0;
+    if (payFilter === "Pending") return balance > 0;
+    if (payFilter === "Partly Paid") return balance > 0 && paid > 0;
+    if (payFilter === "Fully Paid") return balance <= 0;
+    return true;
+  };
+
   const filtered = invoices.filter(
     (inv) =>
-      inv.invoiceNumber.toLowerCase().includes(search.toLowerCase()) ||
-      inv.patientName.toLowerCase().includes(search.toLowerCase()),
+      (inv.invoiceNumber.toLowerCase().includes(search.toLowerCase()) ||
+        inv.patientName.toLowerCase().includes(search.toLowerCase())) &&
+      matchesPayFilter(inv),
   );
 
   const totalPages = Math.ceil(filtered.length / PER_PAGE) || 1;
@@ -169,14 +183,34 @@ export default function PharmacyBilling() {
         />
       </div>
 
-      <SearchBar
-        value={search}
-        onChange={(s) => {
-          setSearch(s);
-          setPage(1);
-        }}
-        placeholder="Search invoice number or patient name..."
-      />
+      <div className="flex flex-col sm:flex-row gap-3 sm:items-center justify-between">
+        <SearchBar
+          value={search}
+          onChange={(s) => {
+            setSearch(s);
+            setPage(1);
+          }}
+          placeholder="Search invoice number or patient name..."
+        />
+        <div className="flex items-center gap-1.5 p-1 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-full shadow-2xs overflow-x-auto max-w-full">
+          {["", "Pending", "Partly Paid", "Fully Paid"].map((f) => (
+            <button
+              key={f || "all"}
+              onClick={() => {
+                setPayFilter(f);
+                setPage(1);
+              }}
+              className={`px-4 py-1.5 rounded-full text-xs font-extrabold transition-all whitespace-nowrap ${
+                payFilter === f
+                  ? "bg-[#0f4a29] text-white shadow-xs"
+                  : "text-slate-500 hover:text-slate-900"
+              }`}
+            >
+              {f || "All Payments"}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {loading ? (
         <div className="flex items-center justify-center py-16">
@@ -216,7 +250,7 @@ export default function PharmacyBilling() {
                   {inv.invoiceNumber}
                 </Td>
                 <Td className="text-slate-400 font-medium whitespace-nowrap">
-                  {fmtDateTime(inv.createdAt)}
+                  {fmtDateTime(inv.invoiceDate || inv.createdAt)}
                 </Td>
                 <Td className="font-extrabold text-slate-900 dark:text-white">
                   {inv.patientName}
@@ -235,6 +269,22 @@ export default function PharmacyBilling() {
                   }
                 >
                   {fmtINR(inv.balance)}
+                  {/* An invoice can be settled in instalments, so show how
+                      far along it is rather than just the number. */}
+                  <div className="text-[10px] font-bold mt-0.5">
+                    {inv.balance > 0 ? (
+                      <span className="text-amber-600 dark:text-amber-400">
+                        {(inv.paid || 0) > 0 ? "Partly paid" : "Unpaid"}
+                        {Array.isArray(inv.payments) && inv.payments.length > 1
+                          ? ` · ${inv.payments.length} payments`
+                          : ""}
+                      </span>
+                    ) : (
+                      <span className="text-[#0f4a29] dark:text-[#52b788]">
+                        Fully paid
+                      </span>
+                    )}
+                  </div>
                 </Td>
                 <Td>{inv.paymentMethod || "—"}</Td>
                 <Td className="text-slate-500 font-medium">
